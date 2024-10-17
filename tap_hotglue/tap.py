@@ -79,7 +79,7 @@ class TapHotglue(Tap):
                 stream_fields.update({"records_jsonpath": get_json_path(json_path)})
             
             if stream_data.get("schema"):
-                stream_fields.update({"schema": stream_data["schema"]})
+                stream_fields.update({"json_schema": stream_data["schema"]})
 
             yield type(
                 name,

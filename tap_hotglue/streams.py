@@ -51,4 +51,6 @@ class BaseStream(HotglueStream):
 
     @cached_property
     def schema(self) -> dict:
+        if hasattr(self, "json_schema"):
+            return self.json_schema
         return self.get_schema()
