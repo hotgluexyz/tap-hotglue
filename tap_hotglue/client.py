@@ -80,17 +80,18 @@ class HotglueStream(RESTStream):
         field = match.group(1).strip() # Get the field name
         default_value = match.group(2) # Get the default value
 
-        value = self.config.get(field, default_value)  # Use the default value if field is not found
-        if not default_value:
+        value = self.config.get(field)  # Use the default value if field is not found
+        if value:
             # replace config value in string
             return path.replace(match.group(0), value) 
-        # return default value
-        return default_value.strip()  
+        if default_value:
+            # return default value
+            return default_value.strip()  
     
     def get_pagination_type(self):
         pagination = self.tap_definition.get("streams", [])
         if pagination:
-            pagination_type = [pag["pagination"] for pag in pagination if pag["id"] == self.name]
+            pagination_type = [pag.get("pagination") for pag in pagination if pag["id"] == self.name and pag.get("pagination")]
             if pagination_type:
                 return pagination_type[0]
 
@@ -117,7 +118,9 @@ class HotglueStream(RESTStream):
         params: dict = {}
         if self.params:
             for param in self.params:
-                params[param["name"]] = self.get_field_value(param["value"])
+                value = self.get_field_value(param["value"])
+                if value:
+                    params[param["name"]] = value
         if next_page_token:
             pagination_type = self.get_pagination_type()
             params[pagination_type["page_name"]] = next_page_token
