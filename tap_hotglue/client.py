@@ -8,7 +8,7 @@ from memoization import cached
 
 from singer_sdk.helpers.jsonpath import extract_jsonpath
 from singer_sdk.streams import RESTStream
-from singer_sdk.authenticators import APIKeyAuthenticator
+from singer_sdk.authenticators import APIKeyAuthenticator, BasicAuthenticator
 from functools import cached_property
 import re
 from singer_sdk import typing as th
@@ -56,6 +56,12 @@ class HotglueStream(RESTStream):
                 key=self.authentication.get("name", "x-api-key"),
                 value=self.get_field_value(self.authentication["value"]),
                 location=self.authentication.get("location", "header")
+            )
+        elif type == "basic":
+            return BasicAuthenticator.create_for_stream(
+                self,
+                username=self.get_field_value(self.authentication["username"]),
+                password=self.get_field_value(self.authentication["password"]),
             )
 
     @property
