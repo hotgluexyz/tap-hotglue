@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union, List, Iterable, Callable, cast
 import backoff
 from tap_hotglue.exceptions import TooManyRequestsError
-
+from pendulum import parse
 
 
 class HotglueStream(RESTStream):
@@ -40,6 +40,7 @@ class HotglueStream(RESTStream):
     records_jsonpath = "$.[*]"
     next_page_token_jsonpath = "$.next_page"
     params = None
+    incremental_sync = {}
 
     @cached_property
     def authentication(self):
@@ -117,11 +118,34 @@ class HotglueStream(RESTStream):
             if next(self.parse_response(response), None):
                 return previous_token + 1
 
+    def get_starting_time(self, context):
+        start_date = self.config.get("start_date")
+        if start_date:
+            start_date = parse(self.config.get("start_date"))
+        rep_key = self.get_starting_timestamp(context)
+        return rep_key or start_date
+    
+    def get_incremental_sync_params(self, incremental_data, context):
+        if not incremental_data.get("field_name"):
+            self.logger.warning(f"Incremental sync filter field name was not provided for stream {self.name}, running a fullsync.")
+            return {}
+        if not incremental_data.get("location") == "request_parameter":
+            return {}
+        datetime_format = incremental_data.get("datetime_format")
+        if not datetime_format:
+            datetime_format = "%Y-%m-%dT%H:%M:%SZ"
+            self.logger.warning(f"Datetime format for incremental_sync not provided for stream {self.name}, using '{datetime_format}' as default")
+        # get start_date
+        start_date = self.get_starting_time(context).strftime(datetime_format)
+        return {incremental_data["field_name"]: start_date}
+
     def get_url_params(
         self, context: Optional[dict], next_page_token: Optional[Any]
     ) -> Dict[str, Any]:
         """Return a dictionary of values to be used in URL parameterization."""
         params: dict = {}
+        if self.incremental_sync:
+            params.update(self.get_incremental_sync_params(self.incremental_sync, context))
         if self.params:
             for param in self.params:
                 value = self.get_field_value(param["value"])

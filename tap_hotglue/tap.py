@@ -55,10 +55,10 @@ class TapHotglue(Tap):
                 name = stream_data["name"]
                 path = stream_data["path"]
             except KeyError as e:
-                raise Exception(f"Name and/or id values were not found when trying to build the stream for stream_data {stream_data}")
+                raise Exception(f"Name and/or path values were not found when trying to build the stream for stream_data {stream_data}")
             
             if not name or not path:
-                raise Exception(f"Name and/or id values were not found when trying to build the stream for stream_data {stream_data}")
+                raise Exception(f"Name and/or path values were not found when trying to build the stream for stream_data {stream_data}")
 
             id = stream_data.get("id") or snakecase(name)
             name = name.replace(" ", "")
@@ -68,6 +68,10 @@ class TapHotglue(Tap):
                 "name": id,
                 "path": path
             }
+
+            if stream_data.get("incremental_sync", {}).get("replication_key"):
+                stream_fields.update({"replication_key": stream_data["incremental_sync"]["replication_key"]})
+                stream_fields.update({"incremental_sync": stream_data["incremental_sync"]})
 
             # add custom params
             if stream_data.get("custom_query_params"):
