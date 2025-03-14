@@ -79,11 +79,11 @@ class HotglueStream(RESTStream):
     
     def get_field_value(self, path):
         match = re.search(r"\{config\.(.*?)(?:\s*\|\s*(.*?))?\}", path)
-        
+
+        # There's no config reference to replace
         if not match:
-            self.logger.info(f"Value not found for {path}")
-            return
-        
+            return path
+
         field = match.group(1).strip() # Get the field name
         default_value = match.group(2) # Get the default value
 
