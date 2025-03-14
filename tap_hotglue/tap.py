@@ -69,6 +69,9 @@ class TapHotglue(Tap):
                 "path": path
             }
 
+            if stream_data.get("primary_keys"):
+                stream_fields["primary_keys"] = stream_data["primary_keys"]
+
             if stream_data.get("incremental_sync", {}).get("replication_key"):
                 stream_fields.update({"replication_key": stream_data["incremental_sync"]["replication_key"]})
                 stream_fields.update({"incremental_sync": stream_data["incremental_sync"]})
