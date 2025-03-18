@@ -30,10 +30,6 @@ class HotglueStream(RESTStream):
 
     @property
     def url_base(self) -> str:
-        # check if default base url was passed in tap definitions
-        is_base_url = urlparse(self.tap_definition["base_url"])
-        if all([is_base_url.scheme, is_base_url.netloc]):
-            return self.tap_definition["base_url"]
         # get base url from config file
         return self.get_field_value(self.tap_definition["base_url"])
 
