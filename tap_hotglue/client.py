@@ -73,15 +73,58 @@ class HotglueStream(RESTStream):
             if header_value and header_name:
                 headers[header_name] = header_value
         return headers
-    
+
     @cached_property
     def datetime_fields(self):
+        """Get all datetime fields from schema, including nested ones."""
         datetime_fields = []
-        for key, value in self.schema["properties"].items():
-            if value.get("format") == "date-time":
-                datetime_fields.append(key)
+
+        def find_datetime_fields(schema, path=""):
+            if not isinstance(schema, dict):
+                return
+
+            if schema.get("format") == "date-time":
+                datetime_fields.append(path)
+                return
+
+            if "properties" in schema:
+                for prop_name, prop_schema in schema["properties"].items():
+                    new_path = f"{path}.{prop_name}" if path else prop_name
+                    find_datetime_fields(prop_schema, new_path)
+
+            if "items" in schema:
+                find_datetime_fields(schema["items"], path)
+
+        find_datetime_fields(self.schema)
         return datetime_fields
-    
+
+    def _process_datetime_fields(self, data, path=""):
+        """Recursively process datetime fields in the data structure."""
+        if not isinstance(data, (dict, list)):
+            return data
+
+        if isinstance(data, list):
+            return [self._process_datetime_fields(item, path) for item in data]
+
+        result = {}
+        for key, value in data.items():
+            current_path = f"{path}.{key}" if path else key
+            if (
+                current_path in self.datetime_fields
+                and value
+                and self.incremental_sync.get("datetime_format") == "timestamp"
+            ):
+                try:
+                    dt_field = datetime.utcfromtimestamp(int(value))
+                    result[key] = dt_field.isoformat()
+                except (ValueError, TypeError):
+                    result[key] = value
+            elif isinstance(value, (dict, list)):
+                result[key] = self._process_datetime_fields(value, current_path)
+            else:
+                result[key] = value
+        return result
+
     def get_field_value(self, path):
         match = re.search(r"\{config\.(.*?)(?:\s*\|\s*(.*?))?\}", path)
 
@@ -99,7 +142,7 @@ class HotglueStream(RESTStream):
         if default_value:
             # return default value
             return default_value.strip()  
-    
+
     def get_pagination_type(self):
         pagination = self.tap_definition.get("streams", [])
         if pagination:
@@ -133,7 +176,7 @@ class HotglueStream(RESTStream):
             start_date = parse(self.config.get("start_date"))
         rep_key = self.get_starting_timestamp(context)
         return rep_key or start_date
-    
+
     def get_incremental_sync_params(self, incremental_data, context):
         if not incremental_data.get("field_name"):
             self.logger.warning(f"Incremental sync filter field name was not provided for stream {self.name}, running a fullsync.")
@@ -171,7 +214,7 @@ class HotglueStream(RESTStream):
             if pagination_type.get("page_name"):
                 params[pagination_type["page_name"]] = next_page_token
         return params
-    
+
     def request_decorator(self, func: Callable) -> Callable:
         decorator: Callable = backoff.on_exception(
             backoff.expo,
@@ -196,7 +239,7 @@ class HotglueStream(RESTStream):
             interval=30,
         )(decorator)
         return decorator
-    
+
     def response_error_message(self, response: requests.Response) -> str:
         """Build error message for invalid http statuses.
 
@@ -215,7 +258,7 @@ class HotglueStream(RESTStream):
             f"{response.status_code} {error_type} Error: "
             f"{response.reason} for path: {self.path}. Response {response.text}"
         )
-    
+
     def validate_response(self, response: requests.Response) -> None:
         if response.status_code in [429]:
             raise TooManyRequestsError(response.text)
@@ -228,12 +271,12 @@ class HotglueStream(RESTStream):
         elif 400 <= response.status_code < 500:
             msg = self.response_error_message(response)
             raise FatalAPIError(msg)
-    
+
     def post_process(self, row: dict, context: Optional[dict]) -> dict:
-        """As needed, append or transform raw data to match expected structure."""
-        if self.incremental_sync and self.incremental_sync.get("datetime_format") == "timestamp":
-            for field in self.datetime_fields:
-                if row.get(field):
-                    dt_field = datetime.utcfromtimestamp(int(row[field]))
-                    row[field] = dt_field.isoformat()
+        """Process datetime fields in the data structure, including nested ones."""
+        if (
+            self.incremental_sync
+            and self.incremental_sync.get("datetime_format") == "timestamp"
+        ):
+            return self._process_datetime_fields(row)
         return row
