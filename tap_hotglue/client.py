@@ -231,9 +231,9 @@ class HotglueStream(RESTStream):
     
     def post_process(self, row: dict, context: Optional[dict]) -> dict:
         """As needed, append or transform raw data to match expected structure."""
-        if self.config.get("parse_timestamps"):
+        if self.incremental_sync and self.incremental_sync.get("datetime_format") == "timestamp":
             for field in self.datetime_fields:
                 if row.get(field):
                     dt_field = datetime.utcfromtimestamp(int(row[field]))
                     row[field] = dt_field.isoformat()
-            return row
+        return row
