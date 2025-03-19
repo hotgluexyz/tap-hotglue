@@ -58,8 +58,8 @@ class HotglueStream(RESTStream):
         elif type == "basic":
             return BasicAuthenticator.create_for_stream(
                 self,
-                username=self.get_field_value(self.authentication["username"]),
-                password=self.get_field_value(self.authentication["password"]),
+                username=self.get_field_value(self.authentication.get("username", "")),
+                password=self.get_field_value(self.authentication.get("password", "")),
             )
 
     @property
