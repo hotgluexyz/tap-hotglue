@@ -19,7 +19,8 @@ from typing import Any, Dict, Optional, Union, List, Iterable, Callable, cast
 import backoff
 from tap_hotglue.exceptions import TooManyRequestsError
 from pendulum import parse
-
+from datetime import datetime
+from tap_hotglue.utils import get_json_path
 
 class HotglueStream(RESTStream):
     """Hotglue stream class."""
@@ -73,6 +74,14 @@ class HotglueStream(RESTStream):
                 headers[header_name] = header_value
         return headers
     
+    @cached_property
+    def datetime_fields(self):
+        datetime_fields = []
+        for key, value in self.schema["properties"].items():
+            if value.get("format") == "date-time":
+                datetime_fields.append(key)
+        return datetime_fields
+    
     def get_field_value(self, path):
         match = re.search(r"\{config\.(.*?)(?:\s*\|\s*(.*?))?\}", path)
 
@@ -113,6 +122,10 @@ class HotglueStream(RESTStream):
             previous_token = previous_token or start_page
             if next(self.parse_response(response), None):
                 return previous_token + 1
+        if pagination_type.get("type") == "offset":
+            page_jsonpath = pagination_type.get("next_page_jsonpath")
+            offset = next(extract_jsonpath(get_json_path(page_jsonpath), input=response.json()), None)
+            return offset
 
     def get_starting_time(self, context):
         start_date = self.config.get("start_date")
@@ -132,7 +145,11 @@ class HotglueStream(RESTStream):
             datetime_format = "%Y-%m-%dT%H:%M:%SZ"
             self.logger.warning(f"Datetime format for incremental_sync not provided for stream {self.name}, using '{datetime_format}' as default")
         # get start_date
-        start_date = self.get_starting_time(context).strftime(datetime_format)
+        start_date = self.get_starting_time(context)
+        if datetime_format == "timestamp":
+            start_date = int(start_date.timestamp())
+        else:
+            start_date = start_date.strftime(datetime_format)
         return {incremental_data["field_name"]: start_date}
 
     def get_url_params(
@@ -149,7 +166,10 @@ class HotglueStream(RESTStream):
                     params[param["name"]] = value
         if next_page_token:
             pagination_type = self.get_pagination_type()
-            params[pagination_type["page_name"]] = next_page_token
+            if pagination_type.get("page_size") and  pagination_type.get("page_size_parameter"):
+                params[pagination_type["page_size_parameter"]] = pagination_type["page_size"] 
+            if pagination_type.get("page_name"):
+                params[pagination_type["page_name"]] = next_page_token
         return params
     
     def request_decorator(self, func: Callable) -> Callable:
@@ -208,3 +228,12 @@ class HotglueStream(RESTStream):
         elif 400 <= response.status_code < 500:
             msg = self.response_error_message(response)
             raise FatalAPIError(msg)
+    
+    def post_process(self, row: dict, context: Optional[dict]) -> dict:
+        """As needed, append or transform raw data to match expected structure."""
+        if self.config.get("parse_timestamps"):
+            for field in self.datetime_fields:
+                if row.get(field):
+                    dt_field = datetime.utcfromtimestamp(int(row[field]))
+                    row[field] = dt_field.isoformat()
+            return row
