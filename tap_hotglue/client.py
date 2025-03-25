@@ -12,7 +12,7 @@ from singer_sdk.authenticators import APIKeyAuthenticator, BasicAuthenticator
 from functools import cached_property
 import re
 from singer_sdk import typing as th
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from singer_sdk.exceptions import FatalAPIError, RetriableAPIError
 from pathlib import Path
 from typing import Any, Dict, Optional, Union, List, Iterable, Callable, cast
@@ -168,6 +168,17 @@ class HotglueStream(RESTStream):
         if pagination_type.get("type") == "offset":
             page_jsonpath = pagination_type.get("next_page_jsonpath")
             offset = next(extract_jsonpath(get_json_path(page_jsonpath), input=response.json()), None)
+
+            # If offset is a url, extract the paging query parameter
+            if offset and offset.startswith("http"):
+                parsed_url = urlparse(offset)
+                # Extract the query parameters
+                query_params = parse_qs(parsed_url.query)
+                cursor = query_params.get(pagination_type.get("page_name"))
+                if cursor:
+                    if len(cursor)>0:
+                        offset = cursor[0]
+            
             return offset
 
     def get_starting_time(self, context):
