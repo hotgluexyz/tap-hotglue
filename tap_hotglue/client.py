@@ -291,3 +291,15 @@ class HotglueStream(RESTStream):
         ):
             return self._process_datetime_fields(row)
         return row
+
+    def get_child_context(self, record: dict, context: Optional[dict]) -> dict:
+        # Get the stream definition for the current stream
+        stream_definition = next((s for s in self.tap_definition.get("streams") if s.get("id") == self.name), None)
+        if not stream_definition:
+            return {}
+        # Build the child context based on the stream definition
+        child_context = {}
+        for child in stream_definition.get("child_context", []):
+            # Get the value from the record using the jsonpath
+            child_context[child["name"]] = next(extract_jsonpath(get_json_path(child["value"]), input=record), None)
+        return child_context

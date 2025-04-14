@@ -49,6 +49,7 @@ class TapHotglue(Tap):
 
     def create_streams(self):
         streams = self._tap_definitions.get("streams", [])
+        stream_classes = {}
         for stream_data in streams:
             # validate all fields needed to create a stream exist:
             try:
@@ -88,11 +89,24 @@ class TapHotglue(Tap):
             if stream_data.get("schema"):
                 stream_fields.update({"json_schema": stream_data["schema"]})
 
-            yield type(
+            if stream_data.get("parent_stream"):
+                parent_stream_name = stream_data["parent_stream"]
+                parent_stream_class = stream_classes.get(parent_stream_name)
+                if not parent_stream_class:
+                    raise Exception(f"Parent stream {parent_stream_name} not found for stream {id}")
+
+                stream_fields.update({"parent_stream_type": parent_stream_class})
+
+            # keep a mapping of stream name to stream class
+            stream_class = type(
                 name,
                 (BaseStream,),
                 stream_fields,
-            )(tap=self)
+            )
+            stream_classes[id] = stream_class
+
+            # yield init version of stream class
+            yield stream_class(tap=self)
 
     def discover_streams(self) -> List[Stream]:
         """Return a list of discovered streams."""

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tap-hotglue"
-version = "0.0.1"
+version = "0.0.4"
 description = "`tap-hotglue` is a Singer tap for Hotglue, built with the Meltano SDK for Singer Taps."
 authors = ["Hotglue"]
 keywords = [
