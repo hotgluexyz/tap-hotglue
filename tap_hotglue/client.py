@@ -65,7 +65,6 @@ class HotglueStream(RESTStream):
     @property
     def http_headers(self) -> dict:
         """Return the http headers needed."""
-        self.logger.info(f"Getting headers for stream {self.name}")
         headers = {}
         tap_headers = self.tap_definition.get("headers", [])
         for header in tap_headers:
@@ -74,12 +73,8 @@ class HotglueStream(RESTStream):
             if header_value and header_name:
                 headers[header_name] = header_value
 
-        self.logger.info(f"Headers from config: {headers}")
-
         # Add dynamic auth headers timestamp, correlation_id and signature
         headers = generate_auth_headers(headers)
-
-        self.logger.info(f"Headers: {headers}")
 
         return headers
 
@@ -134,23 +129,31 @@ class HotglueStream(RESTStream):
                 result[key] = value
         return result
 
-    def get_field_value(self, path):
-        match = re.search(r"\{config\.(.*?)(?:\s*\|\s*(.*?))?\}", path)
+    def get_field_value(self, path, context=dict()):
+        # Match either config or context variables
+        match = re.search(r"\{((?:config|context)\.(.*?))(?:\s*\|\s*(.*?))?\}", path)
 
-        # There's no config reference to replace
+        # There's no variable reference to replace
         if not match:
             return path
 
-        field = match.group(1).strip() # Get the field name
-        default_value = match.group(2) # Get the default value
+        source = match.group(1).split('.')[0]  # Get the source (config or context)
+        field = match.group(2).strip()  # Get the field name
+        default_value = match.group(3)  # Get the default value
 
-        value = self.config.get(field)  # Use the default value if field is not found
+        # Get value from appropriate source
+        if source == "config":
+            value = self.config.get(field)
+        else:  # context
+            value = context.get(field)
+
         if value:
-            # replace config value in string
-            return path.replace(match.group(0), value) 
+            # replace variable value in string
+            return path.replace(match.group(0), str(value))
         if default_value:
             # return default value
-            return default_value.strip()  
+            return default_value.strip()
+        return path
 
     def get_pagination_type(self):
         pagination = self.tap_definition.get("streams", [])
@@ -224,7 +227,7 @@ class HotglueStream(RESTStream):
             params.update(self.get_incremental_sync_params(self.incremental_sync, context))
         if self.params:
             for param in self.params:
-                value = self.get_field_value(param["value"])
+                value = self.get_field_value(param["value"], context)
                 if value:
                     params[param["name"]] = value
         if next_page_token:

@@ -81,7 +81,7 @@ def get_jsonschema_type(obj):
         raise ValueError(f"Unmappable data type '{dtype}'.")
 
 def generate_auth_headers(headers):
-    key = os.environ.get('WALMART_ADS_SANDBOX_PRIVATE_KEY')
+    key = os.environ.get('WALMART_ADS_SANDBOX_PRIVATE_KEY').replace("\\n", "\n")
     rsakey = RSA.importKey(key)
     signer = PKCS1_v1_5.new(rsakey)
     digest = SHA256.new()
@@ -96,7 +96,7 @@ def generate_auth_headers(headers):
     # Create random UUID4 for correlation header using the uuid4 library
     correlation_id = str(uuid.uuid4())
 
-    headers['WM_CONSUMER.INTIMESTAMP'] = timestamp
+    headers['WM_CONSUMER.INTIMESTAMP'] = str(timestamp)
     headers['WM_QOS.CORRELATION_ID'] = correlation_id
     headers['WM_SEC.AUTH_SIGNATURE'] = signature
     
