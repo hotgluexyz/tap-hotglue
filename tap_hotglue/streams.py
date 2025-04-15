@@ -18,6 +18,7 @@ class BaseStream(HotglueStream):
 
         self._requests_session = requests.Session()
         # Get the data
+        self.logger.info(f"Getting schema for stream {self.name}")
         headers = self.http_headers
         headers.update(self.authenticator._auth_headers)
 
