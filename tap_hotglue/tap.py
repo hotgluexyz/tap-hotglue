@@ -70,6 +70,10 @@ class TapHotglue(Tap):
                 "path": path
             }
 
+            # add REST method if it's specified
+            if stream_data.get("method"):
+                stream_fields.update({"rest_method": stream_data["method"]})
+
             if stream_data.get("primary_keys"):
                 stream_fields["primary_keys"] = stream_data["primary_keys"]
 
@@ -80,7 +84,11 @@ class TapHotglue(Tap):
             # add custom params
             if stream_data.get("custom_query_params"):
                 stream_fields.update({"params": stream_data["custom_query_params"]})
-            
+
+            # add custom request payload
+            if stream_data.get("custom_request_payload"):
+                stream_fields.update({"payload": stream_data["custom_request_payload"]})
+
             # add records_jsonpath
             if stream_data.get("record_selector", {}).get("field_path"):
                 json_path = stream_data["record_selector"]["field_path"]

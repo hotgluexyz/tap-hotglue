@@ -8,7 +8,7 @@ from memoization import cached
 
 from singer_sdk.helpers.jsonpath import extract_jsonpath
 from singer_sdk.streams import RESTStream
-from singer_sdk.authenticators import APIKeyAuthenticator, BasicAuthenticator
+from singer_sdk.authenticators import APIKeyAuthenticator, BasicAuthenticator, BearerTokenAuthenticator
 from functools import cached_property
 import re
 from singer_sdk import typing as th
@@ -21,6 +21,7 @@ from tap_hotglue.exceptions import TooManyRequestsError
 from pendulum import parse
 from datetime import datetime
 from tap_hotglue.utils import get_json_path
+from tap_hotglue.auth import BearerTokenRequestAuthenticator
 
 class HotglueStream(RESTStream):
     """Hotglue stream class."""
@@ -37,6 +38,7 @@ class HotglueStream(RESTStream):
     records_jsonpath = "$.[*]"
     next_page_token_jsonpath = "$.next_page"
     params = None
+    payload = None
     incremental_sync = {}
 
     @cached_property
@@ -61,6 +63,29 @@ class HotglueStream(RESTStream):
                 username=self.get_field_value(self.authentication.get("username", "")),
                 password=self.get_field_value(self.authentication.get("password", "")),
             )
+        elif type == "bearer":
+            token_type = self.authentication.get("token_type", "request")
+            if token_type == "request":
+                # get request payload definition
+                request_payload = self.authentication.get("request_payload", {})
+                # build payload, filling config values
+                payload = dict()
+                for key in request_payload:
+                    payload[key] = self.get_field_value(request_payload[key])
+
+                return BearerTokenRequestAuthenticator(
+                    self,
+                    auth_endpoint=self.get_field_value(self.authentication.get("endpoint", "")),
+                    request_payload=payload,
+                    token_path=self.authentication.get("value"),
+                    token_expiry_time=self.authentication.get("token_expiry_time", 3600)
+                )
+            else:
+                return BearerTokenAuthenticator.create_for_stream(
+                    self,
+                    token=self.get_field_value(self.authentication.get("value", ""))
+                )
+
 
     @property
     def http_headers(self) -> dict:
@@ -311,3 +336,18 @@ class HotglueStream(RESTStream):
             # Get the value from the record using the jsonpath
             child_context[child["name"]] = next(extract_jsonpath(get_json_path(child["value"]), input=record), None)
         return child_context
+
+    def prepare_request_payload(
+        self, context, next_page_token
+    ):
+        if self.payload:
+            payload = {}
+
+            for param in self.payload:
+                value = self.get_field_value(param["value"], context)
+                if value is not None:
+                    payload[param["name"]] = value
+
+            return payload
+
+        return None
