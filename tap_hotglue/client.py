@@ -76,6 +76,8 @@ class HotglueStream(RESTStream):
         # Add dynamic auth headers timestamp, correlation_id and signature
         headers = generate_auth_headers(headers)
 
+        self.logger.info(f"Headers: {headers}")
+
         return headers
 
     @cached_property
