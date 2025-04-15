@@ -1,7 +1,14 @@
+import os
 import re
+import uuid
 from singer_sdk import typing as th
 from pendulum import parse
 from datetime import datetime
+import time
+from Cryptodome.PublicKey import RSA
+from Cryptodome.Signature import PKCS1_v1_5
+from Cryptodome.Hash import SHA256
+from base64 import b64encode, b64decode
 
 def get_json_path(path):
     path_parts = path.split(".")
@@ -72,3 +79,25 @@ def get_jsonschema_type(obj):
             return th.ObjectType(*obj_props)
 
         raise ValueError(f"Unmappable data type '{dtype}'.")
+
+def generate_auth_headers(headers):
+    key = os.environ.get('WALMART_ADS_SANDBOX_PRIVATE_KEY')
+    rsakey = RSA.importKey(key)
+    signer = PKCS1_v1_5.new(rsakey)
+    digest = SHA256.new()
+    timestamp = int(time.time()) * 1000
+    consumerId = os.environ.get("WALMART_ADS_SANDBOX_CONSUMER_ID")
+    keyVersion = '1'
+    data = consumerId + '\n' + str(timestamp) + '\n' + keyVersion + '\n'
+    digest.update(data.encode("utf8"))
+    sign = signer.sign(digest)
+    signature = b64encode(sign).decode()
+
+    # Create random UUID4 for correlation header using the uuid4 library
+    correlation_id = str(uuid.uuid4())
+
+    headers['WM_CONSUMER.INTIMESTAMP'] = timestamp
+    headers['WM_QOS.CORRELATION_ID'] = correlation_id
+    headers['WM_SEC.AUTH_SIGNATURE'] = signature
+    
+    return headers

@@ -20,7 +20,7 @@ import backoff
 from tap_hotglue.exceptions import TooManyRequestsError
 from pendulum import parse
 from datetime import datetime
-from tap_hotglue.utils import get_json_path
+from .utils import generate_auth_headers, get_json_path
 
 class HotglueStream(RESTStream):
     """Hotglue stream class."""
@@ -72,6 +72,10 @@ class HotglueStream(RESTStream):
             header_name = header.get("name")
             if header_value and header_name:
                 headers[header_name] = header_value
+
+        # Add dynamic auth headers timestamp, correlation_id and signature
+        headers = generate_auth_headers(headers)
+
         return headers
 
     @cached_property
