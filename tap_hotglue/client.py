@@ -65,6 +65,7 @@ class HotglueStream(RESTStream):
     @property
     def http_headers(self) -> dict:
         """Return the http headers needed."""
+        self.logger.info(f"Getting headers for stream {self.name}")
         headers = {}
         tap_headers = self.tap_definition.get("headers", [])
         for header in tap_headers:
@@ -72,6 +73,8 @@ class HotglueStream(RESTStream):
             header_name = header.get("name")
             if header_value and header_name:
                 headers[header_name] = header_value
+
+        self.logger.info(f"Headers from config: {headers}")
 
         # Add dynamic auth headers timestamp, correlation_id and signature
         headers = generate_auth_headers(headers)
