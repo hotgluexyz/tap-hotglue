@@ -344,7 +344,7 @@ class HotglueStream(RESTStream):
             payload = {}
 
             for param in self.payload:
-                value = self.get_field_value(param["value"], context)
+                value = self.get_field_value(param["value"], context) if isinstance(param["value"], str) else param["value"]
                 if value is not None:
                     payload[param["name"]] = value
 
