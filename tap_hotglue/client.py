@@ -87,7 +87,7 @@ class HotglueStream(RESTStream):
                 )
         elif type == "oauth":
             oauth_url = self.get_field_value(self.authentication.get("token_url"))
-            oauth_request_body = {k:self.get_field_value(v) for k,v in self.authentication.get("request_payload", {}).items()}
+            oauth_request_body = {k:self.get_field_value(v) for k,v in self.authentication.get("request_payload", {}).items() if v}
             return OAuth2Authenticator(self, self.config, auth_endpoint=oauth_url, oauth_request_body=oauth_request_body)
 
     @property
