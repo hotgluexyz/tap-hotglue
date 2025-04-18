@@ -21,7 +21,7 @@ from tap_hotglue.exceptions import TooManyRequestsError
 from pendulum import parse
 from datetime import datetime
 from tap_hotglue.utils import get_json_path
-from tap_hotglue.auth import BearerTokenRequestAuthenticator
+from tap_hotglue.auth import BearerTokenRequestAuthenticator, OAuth2Authenticator
 
 class HotglueStream(RESTStream):
     """Hotglue stream class."""
@@ -85,7 +85,10 @@ class HotglueStream(RESTStream):
                     self,
                     token=self.get_field_value(self.authentication.get("value", ""))
                 )
-
+        elif type == "oauth":
+            oauth_url = self.get_field_value(self.authentication.get("token_url"))
+            oauth_request_body = {k:self.get_field_value(v) for k,v in self.authentication.get("request_payload", {}).items()}
+            return OAuth2Authenticator(self, self.config, auth_endpoint=oauth_url, oauth_request_body=oauth_request_body)
 
     @property
     def http_headers(self) -> dict:
