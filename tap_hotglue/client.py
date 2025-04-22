@@ -26,6 +26,25 @@ from tap_hotglue.auth import BearerTokenRequestAuthenticator
 class HotglueStream(RESTStream):
     """Hotglue stream class."""
 
+    def __init__(
+        self,
+        tap,
+        name: str | None = None,
+        schema = None,
+        path: str | None = None,
+    ) -> None:
+        """Initialize the REST stream.
+
+        Args:
+            tap: Singer Tap this stream belongs to.
+            schema: JSON schema for records in this stream.
+            name: Name of this stream.
+            path: URL path for this entity stream.
+        """
+        super().__init__(tap=tap, name=name, schema=schema, path=path)
+        # Need to parse path in case there are variables in it
+        self.path = self.get_field_value(self.path)
+
     @cached_property
     def tap_definition(self):
         return self._tap._tap_definitions
