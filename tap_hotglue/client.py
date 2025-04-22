@@ -5,11 +5,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union, List, Iterable
 
 from memoization import cached
-
+from cached_property import cached_property
 from singer_sdk.helpers.jsonpath import extract_jsonpath
 from singer_sdk.streams import RESTStream
 from singer_sdk.authenticators import APIKeyAuthenticator, BasicAuthenticator, BearerTokenAuthenticator
-from functools import cached_property
 import re
 from singer_sdk import typing as th
 from urllib.parse import urlparse, parse_qs
@@ -29,9 +28,9 @@ class HotglueStream(RESTStream):
     def __init__(
         self,
         tap,
-        name: str | None = None,
+        name: Union[str, None] = None,
         schema = None,
-        path: str | None = None,
+        path: Union[str, None] = None,
     ) -> None:
         """Initialize the REST stream.
 

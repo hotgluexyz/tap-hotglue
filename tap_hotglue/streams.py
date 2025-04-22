@@ -6,7 +6,7 @@ from tap_hotglue.client import HotglueStream
 
 import requests
 from tap_hotglue.utils import get_jsonschema_type
-from functools import cached_property
+from cached_property import cached_property
 
 class BaseStream(HotglueStream):
     """Define custom stream."""
