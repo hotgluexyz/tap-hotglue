@@ -22,6 +22,17 @@ class TapHotglue(Tap):
 
     name = "tap-hotglue"
 
+    def __init__(
+        self,
+        config=None,
+        catalog=None,
+        state=None,
+        parse_env_config=False,
+        validate_config=True,
+    ) -> None:
+        self.config_file = config[0]
+        super().__init__(config, catalog, state, parse_env_config, validate_config)
+
     @property
     def _tap_definitions(self):
         return read_json_file(self.config.get("tap_definition"))
