@@ -85,11 +85,13 @@ class HotglueStream(RESTStream):
             token_type = self.authentication.get("token_type", "request")
             if token_type == "request":
                 # get request payload definition
-                request_payload = self.authentication.get("request_payload", {})
+                request_payload = self.authentication.get("request_payload", [])
+
                 # build payload, filling config values
-                payload = dict()
-                for key in request_payload:
-                    payload[key] = self.get_field_value(request_payload[key])
+                if isinstance(request_payload, dict):
+                    payload = {k:self.get_field_value(v) for k,v in request_payload.items() if v}
+                else:
+                    payload = {self.get_field_value(obj["name"]):self.get_field_value(obj["value"]) for obj in request_payload}
 
                 return BearerTokenRequestAuthenticator(
                     self,
@@ -105,7 +107,12 @@ class HotglueStream(RESTStream):
                 )
         elif type == "oauth":
             oauth_url = self.get_field_value(self.authentication.get("token_url"))
-            oauth_request_body = {k:self.get_field_value(v) for k,v in self.authentication.get("request_payload", {}).items() if v}
+            request_payload = self.authentication.get("request_payload", [])
+            if isinstance(request_payload, dict):
+                oauth_request_body = {k:self.get_field_value(v) for k,v in request_payload.items() if v}
+            else:
+                oauth_request_body = {self.get_field_value(obj["name"]):self.get_field_value(obj["value"]) for obj in request_payload}
+
             return OAuth2Authenticator(self, self.config, auth_endpoint=oauth_url, oauth_request_body=oauth_request_body)
 
     @property
