@@ -417,5 +417,6 @@ class HotglueStream(RESTStream):
         for k, v in vals.items():
             search_text = "".join(["{", k, "}"])
             if search_text in url:
+                v = str(v) if v else ""
                 url = url.replace(search_text, v if not self.stream_data.get("encode_path") else self._url_encode(v))
         return url
