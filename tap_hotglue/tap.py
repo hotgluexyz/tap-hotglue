@@ -65,11 +65,11 @@ class TapHotglue(Tap):
             # validate all fields needed to create a stream exist:
             try:
                 name = stream_data["name"]
-                path = stream_data["path"]
+                path = stream_data.get("path")
             except KeyError as e:
                 raise Exception(f"Name and/or path values were not found when trying to build the stream for stream_data {stream_data}")
             
-            if not name or not path:
+            if not name or (not path and stream_data.get("method") != "STATIC"):
                 raise Exception(f"Name and/or path values were not found when trying to build the stream for stream_data {stream_data}")
 
             id = stream_data.get("id") or snakecase(name)
@@ -78,7 +78,8 @@ class TapHotglue(Tap):
             # add required fields
             stream_fields = {
                 "name": id,
-                "path": path
+                "path": path,
+                "stream_data": stream_data
             }
 
             # add REST method if it's specified

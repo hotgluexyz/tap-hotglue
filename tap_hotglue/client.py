@@ -21,6 +21,10 @@ from pendulum import parse
 from datetime import datetime
 from tap_hotglue.utils import get_json_path
 from tap_hotglue.auth import BearerTokenRequestAuthenticator, OAuth2Authenticator
+import json
+import ast
+import copy
+
 
 class HotglueStream(RESTStream):
     """Hotglue stream class."""
@@ -42,6 +46,8 @@ class HotglueStream(RESTStream):
         """
         super().__init__(tap=tap, name=name, schema=schema, path=path)
         # Need to parse path in case there are variables in it
+        if self.rest_method == "STATIC":
+            self.path = "/"
         self.path = self.get_field_value(self.path)
 
     @cached_property
@@ -150,6 +156,14 @@ class HotglueStream(RESTStream):
 
         find_datetime_fields(self.schema)
         return datetime_fields
+    
+    def parse_objs(self, obj):
+        if isinstance(obj, str):
+            try:
+                return json.loads(obj)
+            except:
+                return ast.literal_eval(obj)   
+        return obj
 
     def _process_datetime_fields(self, data, path=""):
         """Recursively process datetime fields in the data structure."""
@@ -178,7 +192,7 @@ class HotglueStream(RESTStream):
                 result[key] = value
         return result
 
-    def get_field_value(self, path, context=dict()):
+    def get_field_value(self, path, context=dict(), parse=False):
         # Match either config or context variables
         match = re.search(r"\{((?:config|context)\.(.*?))(?:\s*\|\s*(.*?))?\}", path)
 
@@ -198,11 +212,16 @@ class HotglueStream(RESTStream):
 
         if value:
             # replace variable value in string
-            return path.replace(match.group(0), str(value))
-        if default_value:
+            value = path.replace(match.group(0), str(value))
+        elif default_value:
             # return default value
-            return default_value.strip()
-        return path
+            value = default_value.strip()
+        else:
+            value = path
+    
+        if parse:
+            return self.parse_objs(value)
+        return value
 
     def get_pagination_type(self):
         pagination = self.tap_definition.get("streams", [])
@@ -355,7 +374,7 @@ class HotglueStream(RESTStream):
 
     def get_child_context(self, record: dict, context: Optional[dict]) -> dict:
         # Get the stream definition for the current stream
-        stream_definition = next((s for s in self.tap_definition.get("streams") if s.get("id") == self.name), None)
+        stream_definition = self.stream_data
         if not stream_definition:
             return {}
         # Build the child context based on the stream definition
@@ -379,3 +398,24 @@ class HotglueStream(RESTStream):
             return payload
 
         return None
+    
+    def get_records(self, context) -> Iterable[Dict[str, Any]]:
+        if self.rest_method == "STATIC":
+            records_path = self.stream_data.get("record_selector", {}).get("field_path")
+            if not records_path:
+                raise Exception(f"Stream is of type STATIC but no record_selector was provided for stream {self.name}")
+            records = self.get_field_value(records_path, context, parse=True)
+            for record in records:
+                yield record
+        else:
+            yield from super().get_records(context)
+    
+    def get_url(self, context: Optional[dict], encode=True) -> str:
+        url = "".join([self.url_base, self.path or ""])
+        vals = copy.copy(dict(self.config))
+        vals.update(context or {})
+        for k, v in vals.items():
+            search_text = "".join(["{", k, "}"])
+            if search_text in url:
+                url = url.replace(search_text, v if not self.stream_data.get("encode_path") else self._url_encode(v))
+        return url
