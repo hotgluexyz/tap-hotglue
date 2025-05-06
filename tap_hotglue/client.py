@@ -24,6 +24,7 @@ from tap_hotglue.auth import BearerTokenRequestAuthenticator, OAuth2Authenticato
 import json
 import ast
 import copy
+import cloudscraper
 
 
 class HotglueStream(RESTStream):
@@ -420,3 +421,20 @@ class HotglueStream(RESTStream):
                 v = str(v) if v else ""
                 url = url.replace(search_text, v if not self.stream_data.get("encode_path") else self._url_encode(v))
         return url
+
+    def _request(
+        self, prepared_request: requests.PreparedRequest, context: dict | None
+    ) -> requests.Response:
+        if self.tap_definition.get("cloudflare_bypass"):
+            scraper = cloudscraper.create_scraper()
+
+            response = scraper.post(
+                prepared_request.url,
+                headers=prepared_request.headers,
+            )
+
+            self.validate_response(response)
+
+            return response
+        else:
+            return super()._request(prepared_request, context)
