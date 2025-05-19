@@ -426,12 +426,20 @@ class HotglueStream(RESTStream):
         self, prepared_request: requests.PreparedRequest, context: dict | None
     ) -> requests.Response:
         if self.tap_definition.get("cloudflare_bypass"):
+            self.logger.info("Using cloudflare_bypass mode instead of default request method")
             scraper = cloudscraper.create_scraper()
 
-            response = scraper.post(
-                prepared_request.url,
-                headers=prepared_request.headers,
-            )
+            # NOTE: if this doesn't work, we can use self.rest_method
+            if prepared_request.method == "POST":
+                response = scraper.post(
+                    prepared_request.url,
+                    headers=prepared_request.headers,
+                )
+            else:
+                response = scraper.get(
+                    prepared_request.url,
+                    headers=prepared_request.headers,
+                )
 
             self.validate_response(response)
 
