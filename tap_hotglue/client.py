@@ -180,10 +180,16 @@ class HotglueStream(RESTStream):
             if (
                 current_path in self.datetime_fields
                 and value
-                and self.incremental_sync.get("datetime_format") == "timestamp"
+                and self.incremental_sync.get("datetime_format") in ["timestamp", "timestamp_ms"]
             ):
                 try:
-                    dt_field = datetime.utcfromtimestamp(int(value))
+                    timestamp = int(value)
+
+                    # if timestamp_ms, convert to timestamp
+                    if self.incremental_sync.get("datetime_format") == "timestamp_ms":
+                        timestamp = timestamp / 1000
+                    
+                    dt_field = datetime.utcfromtimestamp(timestamp)
                     result[key] = dt_field.isoformat()
                 except (ValueError, TypeError):
                     result[key] = value
@@ -273,8 +279,6 @@ class HotglueStream(RESTStream):
         if not incremental_data.get("field_name"):
             self.logger.warning(f"Incremental sync filter field name was not provided for stream {self.name}, running a fullsync.")
             return {}
-        if not incremental_data.get("location") == "request_parameter":
-            return {}
         datetime_format = incremental_data.get("datetime_format")
         if not datetime_format:
             datetime_format = "%Y-%m-%dT%H:%M:%SZ"
@@ -283,6 +287,8 @@ class HotglueStream(RESTStream):
         start_date = self.get_starting_time(context)
         if datetime_format == "timestamp":
             start_date = int(start_date.timestamp())
+        elif datetime_format == "timestamp_ms":
+            start_date = int(start_date.timestamp() * 1000)
         else:
             start_date = start_date.strftime(datetime_format)
         return {incremental_data["field_name"]: start_date}
@@ -292,7 +298,7 @@ class HotglueStream(RESTStream):
     ) -> Dict[str, Any]:
         """Return a dictionary of values to be used in URL parameterization."""
         params: dict = {}
-        if self.incremental_sync:
+        if self.incremental_sync and self.incremental_sync.get("location") == "request_parameter":
             params.update(self.get_incremental_sync_params(self.incremental_sync, context))
         if self.params:
             for param in self.params:
@@ -368,7 +374,7 @@ class HotglueStream(RESTStream):
         """Process datetime fields in the data structure, including nested ones."""
         if (
             self.incremental_sync
-            and self.incremental_sync.get("datetime_format") == "timestamp"
+            and self.incremental_sync.get("datetime_format") in ["timestamp", "timestamp_ms"]
         ):
             return self._process_datetime_fields(row)
         return row
@@ -395,6 +401,10 @@ class HotglueStream(RESTStream):
                 value = self.get_field_value(param["value"], context) if isinstance(param["value"], str) else param["value"]
                 if value is not None:
                     payload[param["name"]] = value
+
+            # add incremental sync params
+            if self.incremental_sync and self.incremental_sync.get("location") == "body":
+                payload.update(self.get_incremental_sync_params(self.incremental_sync, context))
 
             return payload
 
