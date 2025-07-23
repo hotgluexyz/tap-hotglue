@@ -430,6 +430,12 @@ class HotglueStream(RESTStream):
             if search_text in url:
                 v = str(v) if v else ""
                 url = url.replace(search_text, v if not self.stream_data.get("encode_path") else self._url_encode(v))
+
+        # If the incremental_sync location is base_url, we handle it here
+        if self.incremental_sync and self.incremental_sync.get("location") == "base_url":
+            params = self.get_incremental_sync_params(self.incremental_sync, context)
+            url = url.replace("{" + self.incremental_sync.get("field_name") + "}", params[self.incremental_sync.get("field_name")])
+
         return url
 
     def _request(
