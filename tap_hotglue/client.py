@@ -21,6 +21,7 @@ from pendulum import parse
 from datetime import datetime
 from tap_hotglue.utils import get_json_path
 from tap_hotglue.auth import BearerTokenRequestAuthenticator, OAuth2Authenticator
+from singer_sdk.helpers._typing import is_datetime_type
 import json
 import ast
 import copy
@@ -377,6 +378,11 @@ class HotglueStream(RESTStream):
             and self.incremental_sync.get("datetime_format") in ["timestamp", "timestamp_ms"]
         ):
             return self._process_datetime_fields(row)
+        
+
+        # Add time_extracted field if specified as rep key
+        if self.incremental_sync and self.incremental_sync.get("replication_key") == "time_extracted":
+            row["time_extracted"] = datetime.now().isoformat()
         return row
 
     def get_child_context(self, record: dict, context: Optional[dict]) -> dict:
@@ -462,3 +468,14 @@ class HotglueStream(RESTStream):
             return response
         else:
             return super()._request(prepared_request, context)
+        
+    @property
+    def is_timestamp_replication_key(self) -> bool:
+        if not self.replication_key:
+            return False
+        
+        # time_extracted requires override as it is not in catalog
+        if self.replication_key == "time_extracted":
+            return True
+        type_dict = self.schema.get("properties", {}).get(self.replication_key)
+        return is_datetime_type(type_dict)
