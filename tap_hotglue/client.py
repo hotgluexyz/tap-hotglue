@@ -59,7 +59,7 @@ class HotglueStream(RESTStream):
     @property
     def url_base(self) -> str:
         # get base url from config file
-        return self.get_field_value(self.tap_definition["base_url"])
+        return self.tap_definition["definitions"].get("base_requester").get("url_base") if self._tap.airbyte_tap else self.get_field_value(self.tap_definition["base_url"])
 
     records_jsonpath = "$.[*]"
     next_page_token_jsonpath = "$.next_page"
@@ -69,12 +69,19 @@ class HotglueStream(RESTStream):
 
     @cached_property
     def authentication(self):
-        return self.tap_definition.get("authentication")
+        return self.tap_definition["definitions"].get("base_requester").get("authenticator") if self._tap.airbyte_tap else self.tap_definition.get("authentication")
 
     @property
     def authenticator(self):
         """Return a new authenticator object."""
         type = self.authentication["type"]
+
+        if self._tap.airbyte_tap:
+            # TODO: need to handle other auth types
+            match type:
+                case "BasicHttpAuthenticator":
+                    type = "basic"
+
         if type == "api":
             # get api key field used in config
             return APIKeyAuthenticator.create_for_stream(
@@ -201,7 +208,18 @@ class HotglueStream(RESTStream):
         return result
 
     def get_field_value(self, path, context=dict(), parse=False):
-        # Match either config or context variables
+        # Handle Airbyte tap format: {{ config['field_name'] }}
+        if hasattr(self, '_tap') and self._tap.airbyte_tap:
+            match = re.search(r"\{\{\s*config\['([^']+)'\]\s*\}\}", path)
+            if match:
+                field = match.group(1).strip()
+                value = self.config.get(field)
+                if value:
+                    return path.replace(match.group(0), str(value))
+                else:
+                    return path
+        
+        # Match either config or context variables (original format)
         match = re.search(r"\{((?:config|context)\.(.*?))(?:\s*\|\s*(.*?))?\}", path)
 
         # There's no variable reference to replace
@@ -241,6 +259,8 @@ class HotglueStream(RESTStream):
     def get_next_page_token(
         self, response: requests.Response, previous_token: Optional[Any]
     ) -> Optional[Any]:
+        # TODO: add support for Airbyte
+        return None
         """Return a token for identifying next page or None if no more pages."""
         pagination_type = self.get_pagination_type()
         if not pagination_type:
@@ -299,6 +319,8 @@ class HotglueStream(RESTStream):
     ) -> Dict[str, Any]:
         """Return a dictionary of values to be used in URL parameterization."""
         params: dict = {}
+        # TODO: add support for Airbyte
+        return params
         if self.incremental_sync and self.incremental_sync.get("location") == "request_parameter":
             params.update(self.get_incremental_sync_params(self.incremental_sync, context))
         if self.params:
@@ -432,7 +454,7 @@ class HotglueStream(RESTStream):
         vals = copy.copy(dict(self.config))
         vals.update(context or {})
         for k, v in vals.items():
-            search_text = "".join(["{", k, "}"])
+            search_text = "".join(["{{ config['", k, "'] }}"]) if self._tap.airbyte_tap else "".join(["{", k, "}"])
             if search_text in url:
                 v = str(v) if v else ""
                 url = url.replace(search_text, v if not self.stream_data.get("encode_path") else self._url_encode(v))
