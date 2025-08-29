@@ -81,6 +81,13 @@ class HotglueStream(RESTStream):
             match type:
                 case "BasicHttpAuthenticator":
                     type = "basic"
+                case "BearerAuthenticator":
+                    type = "bearer"
+                case "SessionTokenAuthenticator":
+                    type = "bearer"
+                    self.authentication["token_type"] = "request"
+                    self.authentication["endpoint"] = self.authentication.get("login_requester", {}).get("url_base") #TODO test with airbyte endpoint format
+                    self.authentication["request_payload"] = self.authentication.get("login_requester", {}).get("request_body_json")
 
         if type == "api":
             # get api key field used in config
@@ -98,9 +105,9 @@ class HotglueStream(RESTStream):
             )
         elif type == "bearer":
             token_type = self.authentication.get("token_type", "request")
-            if token_type == "request":
-                # get request payload definition
-                request_payload = self.authentication.get("request_payload", [])
+            # get request payload definition
+            request_payload = self.authentication.get("request_payload", [])
+            if token_type == "request" and request_payload:
 
                 # build payload, filling config values
                 if isinstance(request_payload, dict):
@@ -248,8 +255,63 @@ class HotglueStream(RESTStream):
         if parse:
             return self.parse_objs(value)
         return value
+        
+    def eval_expression(self, expr: str, context: dict) -> str | None:
+        """
+        Evaluate expressions like:
+        {{ response.get("version", {}).get("max", {}) }}
+        {{ response.get("list")|tojson() }}
+        """
+        # Trim {{ }}
+        expr = expr.strip()
+        if expr.startswith("{{") and expr.endswith("}}"):
+            expr = expr[2:-2].strip()
+
+        # Handle tojson()
+        tojson = False
+        if expr.endswith("|tojson()"):
+            expr = expr.replace("|tojson()", "").strip()
+            tojson = True
+
+        # Evaluate safely with given context
+        try:
+            value = eval(expr, {"__builtins__": {}}, context)
+        except Exception:
+            return None
+
+        if tojson:
+            return json.dumps(value)
+        return value
 
     def get_pagination_type(self):
+        if self._tap.airbyte_tap:
+            # process common page options
+            stream_pagination = self.tap_definition.get("definitions", {}).get("streams").get(self.name)
+            stream_pagination = stream_pagination.get("retriever", {}).get("paginator")
+
+            processed_pagination = {}
+
+            if page_token_option:= stream_pagination.get("page_token_option"):
+                processed_pagination["page_name"] = page_token_option["field_name"]
+            if pagination_strategy := stream_pagination.get("pagination_strategy"):
+                processed_pagination["page_size"] = pagination_strategy.get("page_size")
+            if page_size_options := stream_pagination.get("page_size_option", {}):
+                processed_pagination["page_size_parameter"] = page_size_options.get("field_name")
+
+            # process conditional pagination options
+            pagination_type = pagination_strategy.get("type")
+            match pagination_type:
+                case "CursorPagination":
+                    processed_pagination["type"] = "offset"
+                    processed_pagination["page_value"] = pagination_strategy.get("cursor_value")
+                
+                case "PageIncrement":
+                    processed_pagination["type"] = "page-increment"
+                    processed_pagination["start_page"] = pagination_strategy.get("start_from_page", 1)
+
+            return processed_pagination
+
+        # look for stream pagination data
         pagination = self.tap_definition.get("streams", [])
         if pagination:
             pagination_type = [pag.get("pagination") for pag in pagination if pag["id"] == self.name and pag.get("pagination")]
@@ -259,8 +321,6 @@ class HotglueStream(RESTStream):
     def get_next_page_token(
         self, response: requests.Response, previous_token: Optional[Any]
     ) -> Optional[Any]:
-        # TODO: add support for Airbyte
-        return None
         """Return a token for identifying next page or None if no more pages."""
         pagination_type = self.get_pagination_type()
         if not pagination_type:
@@ -275,7 +335,10 @@ class HotglueStream(RESTStream):
                 return previous_token + 1
         if pagination_type.get("type") == "offset":
             page_jsonpath = pagination_type.get("next_page_jsonpath")
-            offset = next(extract_jsonpath(get_json_path(page_jsonpath), input=response.json()), None)
+            if page_jsonpath := pagination_type.get("next_page_jsonpath"):
+                offset = next(extract_jsonpath(get_json_path(page_jsonpath), input=response.json()), None)
+            elif page_value := pagination_type.get("page_value"):
+                offset = self.eval_expression(page_value, {"response": response.json()})
 
             # If offset is a url, extract the paging query parameter
             if offset and offset.startswith("http"):
@@ -319,8 +382,6 @@ class HotglueStream(RESTStream):
     ) -> Dict[str, Any]:
         """Return a dictionary of values to be used in URL parameterization."""
         params: dict = {}
-        # TODO: add support for Airbyte
-        return params
         if self.incremental_sync and self.incremental_sync.get("location") == "request_parameter":
             params.update(self.get_incremental_sync_params(self.incremental_sync, context))
         if self.params:
