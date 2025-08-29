@@ -117,12 +117,16 @@ class TapHotglue(Tap):
                 stream_fields.update({"params": stream_data["custom_query_params"]})
             
             if self.airbyte_tap and stream_data.get("retriever", {}).get("requester", {}).get("request_parameters"):
-                stream_fields.update({"params": stream_data["retriever"]["requester"]["request_parameters"]})
+                airbyte_params = stream_data.get("retriever", {}).get("requester", {}).get("request_parameters")
+                params = [{"name": key, "value": value} for key, value in airbyte_params.items()]
+                stream_fields.update({"params": params})
 
             # add custom request payload
-            # TODO: add support for Airbyte
             if stream_data.get("custom_request_payload"):
                 stream_fields.update({"payload": stream_data["custom_request_payload"]})
+            
+            if self.airbyte_tap and (request_body := stream_data.get("retriever", {}).get("requester", {}).get("request_body_json")):
+                request_body = [{"name": key, "value": value} for key, value in request_body.items()]
 
             # add records_jsonpath
             if not self.airbyte_tap and stream_data.get("record_selector", {}).get("field_path"):
@@ -132,7 +136,6 @@ class TapHotglue(Tap):
             if self.airbyte_tap and stream_data.get("retriever", {}).get("record_selector", {}).get("extractor", {}).get("field_path"):
                 # this is an array, we need to process it to be a valid json path
                 json_path = stream_data["retriever"]["record_selector"]["extractor"]["field_path"]
-                # TODO: this is prob wrong
                 json_path = ".".join(json_path)
                 stream_fields.update({"records_jsonpath": get_json_path(json_path)})
             
