@@ -279,7 +279,7 @@ class HotglueStream(RESTStream):
         except Exception:
             return None
 
-        if tojson:
+        if value and tojson:
             return json.dumps(value)
         return value
 
@@ -308,6 +308,9 @@ class HotglueStream(RESTStream):
                 case "PageIncrement":
                     processed_pagination["type"] = "page-increment"
                     processed_pagination["start_page"] = pagination_strategy.get("start_from_page", 1)
+                
+                case "OffsetIncrement":
+                    processed_pagination["type"] = "incremental_offset"
 
             return processed_pagination
 
@@ -351,6 +354,12 @@ class HotglueStream(RESTStream):
                         offset = cursor[0]
             
             return offset
+        
+        if pagination_type.get("type") == "incremental_offset":
+            previous_token = previous_token or 0
+            page_size = pagination_type.get("page_size")
+            return previous_token + page_size
+
 
     def get_starting_time(self, context):
         start_date = self.config.get("start_date")
@@ -514,11 +523,20 @@ class HotglueStream(RESTStream):
         url = "".join([self.url_base, self.path or ""])
         vals = copy.copy(dict(self.config))
         vals.update(context or {})
+
         for k, v in vals.items():
-            search_text = "".join(["{{ config['", k, "'] }}"]) if self._tap.airbyte_tap else "".join(["{", k, "}"])
-            if search_text in url:
-                v = str(v) if v else ""
-                url = url.replace(search_text, v if not self.stream_data.get("encode_path") else self._url_encode(v))
+            v = str(v) if v else ""
+            if self.stream_data.get("encode_path"):
+                v = self._url_encode(v)
+
+            # possible placeholder formats
+            curly_placeholder = f"{{{k}}}" #tap-definition json and child stream path format
+            jinja_placeholder = f"{{{{ config['{k}'] }}}}" # yaml file format
+
+            if curly_placeholder in url:
+                url = url.replace(curly_placeholder, v)
+            if jinja_placeholder in url:
+                url = url.replace(jinja_placeholder, v)
 
         # If the incremental_sync location is base_url, we handle it here
         if self.incremental_sync and self.incremental_sync.get("location") == "base_url":

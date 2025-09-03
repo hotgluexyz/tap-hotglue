@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
 from singer_sdk.helpers._util import read_json_file
 from tap_hotglue.utils import get_json_path, snakecase
 import yaml
+import re
 
 from tap_hotglue.streams import (
     BaseStream
@@ -68,10 +69,71 @@ class TapHotglue(Tap):
             self._catalog = self._singer_catalog
 
         return self._catalog
+    
+    def get_streams_child_context(self, streams):
+        child_to_parent = {}
+        parent_child_context = {}
+        for stream_data in streams:
+            stream_data = streams[stream_data] 
+            parent_stream = stream_data.get("retriever", {}).get("partition_router", {}).get("parent_stream_configs")
+            if parent_stream:
+                parent_stream = parent_stream[0] # singer sdk only allows one parent stream per stream
+                parent_stream_name  = parent_stream.get("stream").get("$ref").split("/")[-1]
+                if not parent_child_context.get(parent_stream_name):
+                    parent_child_context[parent_stream_name] = []
+                
+                parent_child_context[parent_stream_name].append({"name": f"{parent_stream['partition_field']}", "value": f"$.{parent_stream['parent_key']}"})
+
+                child_to_parent[stream_data.get("name")] = parent_stream_name
+        
+        return child_to_parent, parent_child_context
+        
+    def sort_streams(self, streams):
+        child_to_parent, parent_child_context = self.get_streams_child_context(streams)
+
+        ordered = []
+        visited = set()
+        visiting = set()
+
+        def visit(stream):
+            if stream in visited:
+                return
+            if stream in visiting:
+                raise ValueError(f"Cycle detected involving {stream}")
+            visiting.add(stream)
+
+            parent = child_to_parent.get(stream)
+            if parent:
+                visit(parent)
+
+            if stream not in ordered:
+                ordered.append(stream)
+
+            visiting.remove(stream)
+            visited.add(stream)
+
+        for s in streams.keys():  # every stream name
+            visit(s)
+
+        return ordered, parent_child_context
+    
+    def normalize_path(self, path: str) -> str:
+        """
+        Convert a Jinja-style path with stream_slice.item_id
+        into a format with {item_id}.
+        """
+        return re.sub(r"\{\{\s*stream_slice\.(\w+)\s*\}\}", r"{\1}", path)
 
     def create_streams(self):
         streams = self._tap_definitions.get("definitions").get("streams") if self.airbyte_tap else self._tap_definitions.get("streams", [])
         stream_classes = {}
+
+        # order streams to process parent streams first
+        ordered_streams, parent_streams_child_context = self.sort_streams(streams)
+
+        if ordered_streams:
+            streams = {name:streams[name] for name in ordered_streams}
+
         for stream_data in streams:
             if self.airbyte_tap:
                 stream_data = streams[stream_data]
@@ -139,20 +201,34 @@ class TapHotglue(Tap):
                 json_path = ".".join(json_path)
                 stream_fields.update({"records_jsonpath": get_json_path(json_path)})
             
+            # add schema
             if not self.airbyte_tap and stream_data.get("schema"):
                 stream_fields.update({"json_schema": stream_data["schema"]})
             
             if self.airbyte_tap and self._tap_definitions.get("schemas").get(name):
                 stream_fields.update({"json_schema": self._tap_definitions["schemas"][name]})
 
-            # TODO: not supported for Airbyte
+            # get parent stream
+            parent_stream_name = None
             if stream_data.get("parent_stream"):
                 parent_stream_name = stream_data["parent_stream"]
+            
+            if self.airbyte_tap and (parent_stream := stream_data.get("retriever", {}).get("partition_router", {}).get("parent_stream_configs")):
+                if parent_stream:
+                    parent_stream_name  = parent_stream[0].get("stream").get("$ref").split("/")[-1]
+
+                    # update path if it's a child stream
+                    stream_fields["path"] = self.normalize_path(path)
+            
+            if parent_stream_name:
                 parent_stream_class = stream_classes.get(parent_stream_name)
                 if not parent_stream_class:
                     raise Exception(f"Parent stream {parent_stream_name} not found for stream {id}")
-
                 stream_fields.update({"parent_stream_type": parent_stream_class})
+            
+            # add child context data to parent stream if exists
+            if parent_streams_child_context.get(id):
+                stream_fields["stream_data"]["child_context"] = parent_streams_child_context[id]
 
             # keep a mapping of stream name to stream class
             stream_class = type(
