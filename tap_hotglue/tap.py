@@ -75,10 +75,13 @@ class TapHotglue(Tap):
         parent_child_context = {}
         for stream_data in streams:
             stream_data = streams[stream_data] 
-            parent_stream = stream_data.get("retriever", {}).get("partition_router", {}).get("parent_stream_configs")
+            # TODO: should we handle multiple partition routers?
+            partition_router = stream_data.get("retriever", {}).get("partition_router", {})
+            partition_router = partition_router[0] if isinstance(partition_router, list) else partition_router
+            parent_stream = partition_router.get("parent_stream_configs")
             if parent_stream:
                 parent_stream = parent_stream[0] # singer sdk only allows one parent stream per stream
-                parent_stream_name  = parent_stream.get("stream").get("$ref").split("/")[-1]
+                parent_stream_name  = parent_stream.get("stream").get("name")# .get("$ref").split("/")[-1]
                 if not parent_child_context.get(parent_stream_name):
                     parent_child_context[parent_stream_name] = []
                 
@@ -213,9 +216,13 @@ class TapHotglue(Tap):
             if stream_data.get("parent_stream"):
                 parent_stream_name = stream_data["parent_stream"]
             
-            if self.airbyte_tap and (parent_stream := stream_data.get("retriever", {}).get("partition_router", {}).get("parent_stream_configs")):
+            if self.airbyte_tap:
+                # TODO: should we handle multiple partition routers?
+                partition_router = stream_data.get("retriever", {}).get("partition_router", {})
+                partition_router = partition_router[0] if isinstance(partition_router, list) else partition_router
+                parent_stream = partition_router.get("parent_stream_configs")
                 if parent_stream:
-                    parent_stream_name  = parent_stream[0].get("stream").get("$ref").split("/")[-1]
+                    parent_stream_name  = parent_stream[0].get("stream").get("name")#.get("$ref").split("/")[-1]
 
                     # update path if it's a child stream
                     stream_fields["path"] = self.normalize_path(path)

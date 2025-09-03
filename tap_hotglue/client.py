@@ -83,6 +83,8 @@ class HotglueStream(RESTStream):
                     type = "basic"
                 case "BearerAuthenticator":
                     type = "bearer"
+                    # TODO: not sure if this assumption is true for all cases
+                    self.authentication["value"] = self.authentication["api_token"]
                 case "SessionTokenAuthenticator":
                     type = "bearer"
                     self.authentication["token_type"] = "request"
@@ -288,6 +290,9 @@ class HotglueStream(RESTStream):
             # process common page options
             stream_pagination = self.tap_definition.get("definitions", {}).get("streams").get(self.name)
             stream_pagination = stream_pagination.get("retriever", {}).get("paginator")
+
+            if not stream_pagination:
+                return None
 
             processed_pagination = {}
 
