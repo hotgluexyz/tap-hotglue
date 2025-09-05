@@ -26,6 +26,8 @@ import json
 import ast
 import copy
 import cloudscraper
+from jinja2 import Template
+from tap_hotglue.airbyte_helpers import now_utc, format_datetime
 
 
 class HotglueStream(RESTStream):
@@ -217,6 +219,8 @@ class HotglueStream(RESTStream):
         return result
 
     def get_field_value(self, path, context=dict(), parse=False):
+
+        # ---------- 1. Support direct Airbyte-style variables ----------
         # Handle Airbyte tap format: {{ config['field_name'] }}
         if hasattr(self, '_tap') and self._tap.airbyte_tap:
             match = re.search(r"\{\{\s*config\['([^']+)'\]\s*\}\}", path)
@@ -228,6 +232,29 @@ class HotglueStream(RESTStream):
                 else:
                     return path
         
+        # ---------- 2. Support jinja variables ----------
+        jinja_match = re.fullmatch(r"\{\{\s*(.*?)\s*\}\}", path)
+        if jinja_match:
+            # Use the whole path as the template
+            template = Template(path)
+
+            # Context for rendering
+            safe_context = {
+                "config": self.config,
+                "context": context,
+                "now_utc": now_utc,
+                "format_datetime": format_datetime,
+                "stream_slice": context,
+            }
+
+            try:
+                # Render the template
+                result = template.render(safe_context)
+                return str(result)
+            except Exception as e:
+                raise ValueError(f"Failed to render template '{path}': {e}")
+        
+        # ---------- 3. Support direct Hotglue-style variables ----------
         # Match either config or context variables (original format)
         match = re.search(r"\{((?:config|context)\.(.*?))(?:\s*\|\s*(.*?))?\}", path)
 
@@ -349,7 +376,7 @@ class HotglueStream(RESTStream):
                 offset = self.eval_expression(page_value, {"response": response.json()})
 
             # If offset is a url, extract the paging query parameter
-            if offset and offset.startswith("http"):
+            if offset and isinstance(offset, str) and offset.startswith("http"):
                 parsed_url = urlparse(offset)
                 # Extract the query parameters
                 query_params = parse_qs(parsed_url.query)
@@ -525,6 +552,10 @@ class HotglueStream(RESTStream):
             yield from super().get_records(context)
     
     def get_url(self, context: Optional[dict], encode=True) -> str:
+        # make sure path starts with /
+        if not self.path.startswith("/"):
+            self.path = "/" + self.path
+        # join path wth url_base
         url = "".join([self.url_base, self.path or ""])
         vals = copy.copy(dict(self.config))
         vals.update(context or {})
@@ -585,3 +616,4 @@ class HotglueStream(RESTStream):
             return True
         type_dict = self.schema.get("properties", {}).get(self.replication_key)
         return is_datetime_type(type_dict)
+

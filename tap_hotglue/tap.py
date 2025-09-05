@@ -81,7 +81,7 @@ class TapHotglue(Tap):
             parent_stream = partition_router.get("parent_stream_configs")
             if parent_stream:
                 parent_stream = parent_stream[0] # singer sdk only allows one parent stream per stream
-                parent_stream_name  = parent_stream.get("stream").get("name")# .get("$ref").split("/")[-1]
+                parent_stream_name  = parent_stream.get("stream").get("name") or parent_stream.get("stream").get("$ref").split("/")[-1]
                 if not parent_child_context.get(parent_stream_name):
                     parent_child_context[parent_stream_name] = []
                 
@@ -122,10 +122,10 @@ class TapHotglue(Tap):
     
     def normalize_path(self, path: str) -> str:
         """
-        Convert a Jinja-style path with stream_slice.item_id
+        Convert a Jinja-style path with stream_partition.item_id
         into a format with {item_id}.
         """
-        return re.sub(r"\{\{\s*stream_slice\.(\w+)\s*\}\}", r"{\1}", path)
+        return re.sub(r"\{\{\s*stream_partition\.(\w+)\s*\}\}", r"{\1}", path)
 
     def create_streams(self):
         streams = self._tap_definitions.get("definitions").get("streams") if self.airbyte_tap else self._tap_definitions.get("streams", [])
@@ -222,7 +222,7 @@ class TapHotglue(Tap):
                 partition_router = partition_router[0] if isinstance(partition_router, list) else partition_router
                 parent_stream = partition_router.get("parent_stream_configs")
                 if parent_stream:
-                    parent_stream_name  = parent_stream[0].get("stream").get("name")#.get("$ref").split("/")[-1]
+                    parent_stream_name  = parent_stream[0].get("stream").get("name") or parent_stream[0].get("stream").get("$ref").split("/")[-1]
 
                     # update path if it's a child stream
                     stream_fields["path"] = self.normalize_path(path)
