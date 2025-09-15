@@ -140,12 +140,20 @@ class HotglueStream(RESTStream):
                 oauth_request_body = {self.get_field_value(obj["name"]):self.get_field_value(obj["value"]) for obj in request_payload}
 
             return OAuth2Authenticator(self, self.config, auth_endpoint=oauth_url, oauth_request_body=oauth_request_body)
+    
+    def get_airbyte_stream_headers(self):
+        request_data = self.tap_definition.get("definitions", {}).get("streams", {}).get(self.name, {}).get("retriever", {}).get("requester", {}).get("request_headers", {})
+        return [{"name": k, "value": self.get_field_value(v)} for k,v in request_data.items()]
 
     @property
     def http_headers(self) -> dict:
         """Return the http headers needed."""
         headers = {}
         tap_headers = self.tap_definition.get("headers", [])
+
+        if self._tap.airbyte_tap:
+            tap_headers.extend(self.get_airbyte_stream_headers())
+
         for header in tap_headers:
             header_value = self.get_field_value(header.get("value"))
             header_name = header.get("name")
@@ -323,10 +331,11 @@ class HotglueStream(RESTStream):
 
             processed_pagination = {}
 
-            if page_token_option:= stream_pagination.get("page_token_option"):
-                processed_pagination["page_name"] = page_token_option["field_name"]
             if pagination_strategy := stream_pagination.get("pagination_strategy"):
                 processed_pagination["page_size"] = pagination_strategy.get("page_size")
+            # field name for pagination can come from page_token_option or page_size_option
+            if page_token_option:= stream_pagination.get("page_token_option"):
+                processed_pagination["page_name"] = page_token_option.get("field_name")
             if page_size_options := stream_pagination.get("page_size_option", {}):
                 processed_pagination["page_size_parameter"] = page_size_options.get("field_name")
 
