@@ -28,7 +28,8 @@ import copy
 import cloudscraper
 from jinja2 import Template
 from tap_hotglue.airbyte_helpers import now_utc, format_datetime
-
+from tap_hotglue.utils import clean_xml_dict
+import xmltodict
 
 class HotglueStream(RESTStream):
     """Hotglue stream class."""
@@ -410,7 +411,7 @@ class HotglueStream(RESTStream):
         return rep_key or start_date
 
     def get_incremental_sync_params(self, incremental_data, context):
-        if not incremental_data.get("field_name"):
+        if not incremental_data.get("field_name") and not incremental_data.get("path"):
             self.logger.warning(f"Incremental sync filter field name was not provided for stream {self.name}, running a fullsync.")
             return {}
         datetime_format = incremental_data.get("datetime_format")
@@ -425,7 +426,21 @@ class HotglueStream(RESTStream):
             start_date = int(start_date.timestamp() * 1000)
         else:
             start_date = start_date.strftime(datetime_format)
-        return {incremental_data["field_name"]: start_date}
+        
+        # if path is provided, nest the param under that path
+        if incremental_data.get("path"):
+            path_parts = incremental_data["path"].split(".")
+            nested_payload = {}
+            current = nested_payload
+            for part in path_parts[:-1]:
+                if part == "$":
+                    continue
+                current[part] = {}
+                current = current[part]
+            current[path_parts[-1]] = start_date
+            return nested_payload
+        else:
+            return {incremental_data["field_name"]: start_date}
 
     def get_url_params(
         self, context: Optional[dict], next_page_token: Optional[Any]
@@ -533,21 +548,34 @@ class HotglueStream(RESTStream):
     def prepare_request_payload(
         self, context, next_page_token
     ):
+        payload = {}
         if self.payload:
-            payload = {}
-
             for param in self.payload:
                 value = self.get_field_value(param["value"], context) if isinstance(param["value"], str) else param["value"]
                 if value is not None:
                     payload[param["name"]] = value
 
-            # add incremental sync params
-            if self.incremental_sync and self.incremental_sync.get("location") == "body":
-                payload.update(self.get_incremental_sync_params(self.incremental_sync, context))
+        # add incremental sync params
+        if self.incremental_sync and self.incremental_sync.get("location") == "body":
+            # # If a specific path is provided in the incremental sync config, nest the params under that path
+            # if self.incremental_sync.get("path"):
+            #     # get the incremental value for replication key
+            #     incremental_sync_param = self.get_incremental_sync_params(self.incremental_sync, context)
+            #     # inject the value in the provided path
+            #     path_parts = self.incremental_sync["path"].split(".")
+            #     nested_payload = {}
+            #     current = nested_payload
+            #     for part in path_parts[:-1]:
+            #         current[part] = {}
+            #         current = current[part]
+            #     current[path_parts[-1]] = incremental_sync_param
+            #     payload.update(nested_payload)
+            # else:
+            #     # if there is no path inject at the root of the payload
+            payload.update(self.get_incremental_sync_params(self.incremental_sync, context))
 
+        if payload:
             return payload
-
-        return None
     
     def get_records(self, context) -> Iterable[Dict[str, Any]]:
         if self.rest_method == "STATIC":
@@ -626,3 +654,20 @@ class HotglueStream(RESTStream):
         type_dict = self.schema.get("properties", {}).get(self.replication_key)
         return is_datetime_type(type_dict)
 
+    def parse_response(self, response: requests.Response) -> Iterable[Dict[str, Any]]:
+        if self.stream_data.get("response_format") == "application/xml":
+            response = xmltodict.parse(response.text)
+            yield from extract_jsonpath(self.records_jsonpath, input=response)
+        else:
+            return super().parse_response(response)
+    
+    def post_process(self, row: dict, context: Optional[dict]) -> dict:
+        # self.schema always replaces - with _, do the same for the fields
+        row = super().post_process(row, context)
+        new_row = {}
+        for key, value in row.items():
+            if self.stream_data.get("response_format") == "application/xml":
+                value = clean_xml_dict(value)
+            if "-" in key:
+                new_row[key.replace("-", "_")] = value
+        return new_row

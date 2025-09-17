@@ -73,6 +73,11 @@ class TapHotglue(Tap):
     def get_streams_child_context(self, streams):
         child_to_parent = {}
         parent_child_context = {}
+
+        # # make streams a dict
+        # if isinstance(streams, list):
+        #     streams = {stream_data["name"]: stream_data for stream_data in streams}
+
         for stream_data in streams:
             stream_data = streams[stream_data] 
             # TODO: should we handle multiple partition routers?
@@ -114,6 +119,9 @@ class TapHotglue(Tap):
 
             visiting.remove(stream)
             visited.add(stream)
+        
+        # if isinstance(streams, list):
+        #     streams = {stream_data["name"]: stream_data for stream_data in streams}
 
         for s in streams.keys():  # every stream name
             visit(s)
@@ -128,7 +136,16 @@ class TapHotglue(Tap):
         return re.sub(r"\{\{\s*stream_partition\.(\w+)\s*\}\}", r"{\1}", path)
 
     def create_streams(self):
-        streams = self._tap_definitions.get("definitions").get("streams") if self.airbyte_tap else self._tap_definitions.get("streams", [])
+        if self.airbyte_tap:
+            if self._tap_definitions.get("definitions", {}).get("streams"):
+                streams = self._tap_definitions.get("definitions", {}).get("streams")
+            else:
+                streams = {stream["name"]: stream for stream in self._tap_definitions.get("streams")}
+        else:
+            streams = self._tap_definitions.get("streams", [])
+            # convert streams to a dict
+            streams = {stream_data["name"]: stream_data for stream_data in streams}
+
         stream_classes = {}
 
         # order streams to process parent streams first
@@ -137,10 +154,7 @@ class TapHotglue(Tap):
         if ordered_streams:
             streams = {name:streams[name] for name in ordered_streams}
 
-        for stream_data in streams:
-            if self.airbyte_tap:
-                stream_data = streams[stream_data]
-
+        for _, stream_data in streams.items():
             # validate all fields needed to create a stream exist:
             try:
                 name = stream_data["name"]

@@ -2,6 +2,7 @@ import re
 from singer_sdk import typing as th
 from pendulum import parse
 from datetime import datetime
+import xmltodict
 
 def get_json_path(path):
     if not "*" in path:
@@ -72,3 +73,53 @@ def get_jsonschema_type(obj):
             return th.ObjectType(*obj_props)
 
         raise ValueError(f"Unmappable data type '{dtype}'.")
+
+def parse_value(value: str):
+    """Convert string values to proper Python types if possible."""
+    type = None
+    if isinstance(value, dict) and value.get("#text"):
+        type = value.get("@type")
+        value = value.get("#text")
+    # Try boolean
+    if isinstance(value, str) and value.lower() in ["true", "false"]:
+        return value.lower() == "true"
+    
+    # Try integer
+    if value.isdigit() or type == "integer":
+        return int(value)
+    
+    # Try float
+    if type == "number":
+        return float(value)
+
+    # Try date/datetime
+    if type == "datetime":
+        return parse(value)
+
+    return value
+
+
+def clean_xml_dict(data):
+    """
+    Recursively clean xmltodict output:
+    - @nil="true" -> None
+    - @type="array" -> []
+    - Convert nested dicts and lists
+    """
+    if isinstance(data, dict):
+        # Handle special XML attributes like @nil and @type
+        if "@nil" in data and data["@nil"] == "true":
+            return None
+        if "@type" in data and "#text" in data:
+            return parse_value(data)
+        # Otherwise, recursively clean keys
+        return {k: clean_xml_dict(v) for k, v in data.items() if not k.startswith("@")}
+    
+    elif isinstance(data, list):
+        return [clean_xml_dict(item) for item in data]
+    
+    elif isinstance(data, str):
+        return parse_value(data)
+    
+    else:
+        return data
