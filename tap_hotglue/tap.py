@@ -131,6 +131,9 @@ class TapHotglue(Tap):
         streams = self._tap_definitions.get("definitions").get("streams") if self.airbyte_tap else self._tap_definitions.get("streams", [])
         stream_classes = {}
 
+        # standarize streams to be a dictionary
+        streams = {stream['name']:stream for stream in streams}
+
         # order streams to process parent streams first
         ordered_streams, parent_streams_child_context = self.sort_streams(streams)
 
@@ -138,8 +141,7 @@ class TapHotglue(Tap):
             streams = {name:streams[name] for name in ordered_streams}
 
         for stream_data in streams:
-            if self.airbyte_tap:
-                stream_data = streams[stream_data]
+            stream_data = streams[stream_data]
 
             # validate all fields needed to create a stream exist:
             try:
