@@ -132,7 +132,8 @@ class TapHotglue(Tap):
         stream_classes = {}
 
         # standarize streams to be a dictionary
-        streams = {stream['name']:stream for stream in streams}
+        if isinstance(streams, list):
+            streams = {stream['name']:stream for stream in streams}
 
         # order streams to process parent streams first
         ordered_streams, parent_streams_child_context = self.sort_streams(streams)
