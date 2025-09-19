@@ -6,9 +6,9 @@ import isodate
 from datetime import timedelta
 
 def get_json_path(path):
+    if not "*" in path:
+        path = f"{path}.*"
     path_parts = path.split(".")
-    if len(path_parts) == 1:
-        return f"$.{path_parts[0]}[*]"
     if len(path_parts) > 1:
         path = path.replace(".*", "[*]")
         return f"$.{path}"
