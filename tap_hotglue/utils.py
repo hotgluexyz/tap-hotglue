@@ -2,6 +2,8 @@ import re
 from singer_sdk import typing as th
 from pendulum import parse
 from datetime import datetime
+import isodate
+from datetime import timedelta
 
 def get_json_path(path):
     if not "*" in path:
@@ -72,3 +74,12 @@ def get_jsonschema_type(obj):
             return th.ObjectType(*obj_props)
 
         raise ValueError(f"Unmappable data type '{dtype}'.")
+
+def iso_duration_to_timedelta(duration_str: str) -> timedelta:
+    duration = isodate.parse_duration(duration_str)
+    # `parse_duration` returns either timedelta or Duration (with months/years)
+    if isinstance(duration, timedelta):
+        return duration
+    # Approximate months and years
+    days = duration.years * 365 + duration.months * 30
+    return timedelta(days=days, seconds=duration.tdelta.seconds, microseconds=duration.tdelta.microseconds)

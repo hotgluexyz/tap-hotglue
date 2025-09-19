@@ -28,6 +28,8 @@ import copy
 import cloudscraper
 from jinja2 import Template
 from tap_hotglue.airbyte_helpers import now_utc, format_datetime
+from tap_hotglue.utils import iso_duration_to_timedelta
+from datetime import timezone
 
 
 class HotglueStream(RESTStream):
@@ -68,6 +70,7 @@ class HotglueStream(RESTStream):
     params = None
     payload = None
     incremental_sync = {}
+    start_date = None
 
     @cached_property
     def authentication(self):
@@ -403,6 +406,8 @@ class HotglueStream(RESTStream):
 
 
     def get_starting_time(self, context):
+        if self.start_date:
+            return self.start_date
         start_date = self.config.get("start_date")
         if start_date:
             start_date = parse(self.config.get("start_date"))
@@ -625,4 +630,19 @@ class HotglueStream(RESTStream):
             return True
         type_dict = self.schema.get("properties", {}).get(self.replication_key)
         return is_datetime_type(type_dict)
+
+    def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
+        if self.incremental_sync and self.incremental_sync.get("step"):
+            step = iso_duration_to_timedelta(self.incremental_sync.get("step"))
+            # Get current date with timezone
+            now = datetime.now(timezone.utc)
+            start_datetime = self.get_starting_time(context)
+
+            while start_datetime <= now:
+                self.start_date = start_datetime
+                yield from super().get_records(context)
+                start_datetime += step
+        
+        else:
+            yield from super().get_records(context)
 
