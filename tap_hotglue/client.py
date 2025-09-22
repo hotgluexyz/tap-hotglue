@@ -100,7 +100,7 @@ class HotglueStream(RESTStream):
             # get api key field used in config
             return APIKeyAuthenticator.create_for_stream(
                 self,
-                key=self.authentication.get("name", "x-api-key"),
+                key=self.authentication.get("key", "x-api-key"),
                 value=self.get_field_value(self.authentication["value"]),
                 location=self.authentication.get("location", "header")
             )
