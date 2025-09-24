@@ -374,13 +374,15 @@ class HotglueStream(RESTStream):
             self.logger.info(f"No pagination method defined for stream {self.name}")
             return
         if pagination_type.get("type") == "page-increment":
-            start_page = pagination_type.get("start_page", 1)
-            if not start_page:
+            start_page = pagination_type.get("start_page")
+            if start_page is None:
                 self.logger.info(f"No start page provided for stream {self.name}, using 1 as default")
+                start_page = 1
             previous_token = previous_token or start_page
             if next(self.parse_response(response), None):
                 return previous_token + 1
         if pagination_type.get("type") == "offset":
+            offset = None
             page_jsonpath = pagination_type.get("next_page_jsonpath")
             if page_jsonpath := pagination_type.get("next_page_jsonpath"):
                 offset = next(extract_jsonpath(get_json_path(page_jsonpath), input=response.json()), None)
@@ -553,18 +555,7 @@ class HotglueStream(RESTStream):
             return payload
 
         return None
-    
-    def get_records(self, context) -> Iterable[Dict[str, Any]]:
-        if self.rest_method == "STATIC":
-            records_path = self.stream_data.get("record_selector", {}).get("field_path")
-            if not records_path:
-                raise Exception(f"Stream is of type STATIC but no record_selector was provided for stream {self.name}")
-            records = self.get_field_value(records_path, context, parse=True)
-            for record in records:
-                yield record
-        else:
-            yield from super().get_records(context)
-    
+     
     def get_url(self, context: Optional[dict], encode=True) -> str:
         # make sure path starts with /
         if not self.path.startswith("/"):
@@ -644,5 +635,13 @@ class HotglueStream(RESTStream):
                 start_datetime += step
         
         else:
-            yield from super().get_records(context)
+            if self.rest_method == "STATIC":
+                records_path = self.stream_data.get("record_selector", {}).get("field_path")
+                if not records_path:
+                    raise Exception(f"Stream is of type STATIC but no record_selector was provided for stream {self.name}")
+                records = self.get_field_value(records_path, context, parse=True)
+                for record in records:
+                    yield record
+            else:
+                yield from super().get_records(context)
 
