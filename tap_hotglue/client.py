@@ -374,9 +374,10 @@ class HotglueStream(RESTStream):
             self.logger.info(f"No pagination method defined for stream {self.name}")
             return
         if pagination_type.get("type") == "page-increment":
-            start_page = pagination_type.get("start_page", 1)
-            if not start_page:
+            start_page = pagination_type.get("start_page")
+            if start_page is None:
                 self.logger.info(f"No start page provided for stream {self.name}, using 1 as default")
+                start_page = 1
             previous_token = previous_token or start_page
             if next(self.parse_response(response), None):
                 return previous_token + 1
