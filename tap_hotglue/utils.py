@@ -12,6 +12,8 @@ def get_json_path(path):
     if len(path_parts) > 1:
         path = path.replace(".*", "[*]")
         return f"$.{path}"
+    else:
+        return path
 
 def snakecase(string: str) -> str:
     """Convert string into snake case.
