@@ -446,12 +446,13 @@ class HotglueStream(RESTStream):
                 value = self.get_field_value(param["value"], context)
                 if value:
                     params[param["name"]] = value
-        if next_page_token:
-            pagination_type = self.get_pagination_type()
-            if pagination_type.get("page_size") and  pagination_type.get("page_size_parameter"):
-                params[pagination_type["page_size_parameter"]] = pagination_type["page_size"] 
-            if pagination_type.get("page_name"):
-                params[pagination_type["page_name"]] = next_page_token
+
+        # add pagination params
+        pagination_type = self.get_pagination_type()
+
+        if pagination_type and pagination_type.get('location') == "request_parameter":
+            self.add_pagination_params(params, pagination_type, next_page_token)
+
         return params
 
     def request_decorator(self, func: Callable) -> Callable:
@@ -537,10 +538,20 @@ class HotglueStream(RESTStream):
             child_context[child["name"]] = next(extract_jsonpath(get_json_path(child["value"]), input=record), None)
         return child_context
 
+    def add_pagination_params(self, payload, pagination_type, next_page_token):
+        # add page size param
+        if pagination_type.get("page_size") and pagination_type.get("page_size_parameter"):
+            payload[pagination_type["page_size_parameter"]] = pagination_type["page_size"]
+
+        # add next page token
+        if next_page_token:
+            if pagination_type.get("page_name"):
+                payload[pagination_type["page_name"]] = next_page_token
+
     def prepare_request_payload(
         self, context, next_page_token
     ):
-        if self.payload:
+        if self.payload is not None:
             payload = {}
 
             for param in self.payload:
@@ -551,6 +562,12 @@ class HotglueStream(RESTStream):
             # add incremental sync params
             if self.incremental_sync and self.incremental_sync.get("location") == "body":
                 payload.update(self.get_incremental_sync_params(self.incremental_sync, context))
+
+            # add pagination params
+            pagination_type = self.get_pagination_type()
+
+            if pagination_type and pagination_type.get('location') == "body":
+                self.add_pagination_params(payload, pagination_type, next_page_token)
 
             return payload
 

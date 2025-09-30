@@ -190,7 +190,7 @@ class TapHotglue(Tap):
                 stream_fields.update({"params": params})
 
             # add custom request payload
-            if stream_data.get("custom_request_payload"):
+            if stream_data.get("custom_request_payload") is not None:
                 stream_fields.update({"payload": stream_data["custom_request_payload"]})
             
             if self.airbyte_tap and (request_body := stream_data.get("retriever", {}).get("requester", {}).get("request_body_json")):
