@@ -553,7 +553,7 @@ class HotglueStream(RESTStream):
     ):
         pagination_type = self.get_pagination_type()
 
-        if self.payload or (
+        if self.payload is not None or (
             self.incremental_sync and self.incremental_sync.get("location") == "body"
         ) or (
             pagination_type and pagination_type.get('location') == "body"
