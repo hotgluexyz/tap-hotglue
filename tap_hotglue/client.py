@@ -551,7 +551,13 @@ class HotglueStream(RESTStream):
     def prepare_request_payload(
         self, context, next_page_token
     ):
-        if self.payload is not None:
+        pagination_type = self.get_pagination_type()
+
+        if self.payload or (
+            self.incremental_sync and self.incremental_sync.get("location") == "body"
+        ) or (
+            pagination_type and pagination_type.get('location') == "body"
+        ):
             payload = {}
 
             for param in self.payload:
@@ -564,8 +570,6 @@ class HotglueStream(RESTStream):
                 payload.update(self.get_incremental_sync_params(self.incremental_sync, context))
 
             # add pagination params
-            pagination_type = self.get_pagination_type()
-
             if pagination_type and pagination_type.get('location') == "body":
                 self.add_pagination_params(payload, pagination_type, next_page_token)
 
