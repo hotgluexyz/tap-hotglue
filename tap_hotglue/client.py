@@ -19,7 +19,7 @@ import backoff
 from tap_hotglue.exceptions import TooManyRequestsError
 from pendulum import parse
 from datetime import datetime
-from tap_hotglue.utils import get_json_path
+from tap_hotglue.utils import get_json_path, xml_to_dict
 from tap_hotglue.auth import BearerTokenRequestAuthenticator, OAuth2Authenticator
 from singer_sdk.helpers._typing import is_datetime_type
 import json
@@ -265,36 +265,41 @@ class HotglueStream(RESTStream):
             except Exception as e:
                 raise ValueError(f"Failed to render template '{path}': {e}")
         
-        # ---------- 3. Support direct Hotglue-style variables ----------
-        # Match either config or context variables (original format)
-        match = re.search(r"\{((?:config|context)\.(.*?))(?:\s*\|\s*(.*?))?\}", path)
+        matches = re.findall(r"\{([^}]+)\}", path)
+        for full_var in matches:
+            var = full_var.strip()
 
-        # There's no variable reference to replace
-        if not match:
-            return path
+            # Split optional default
+            if '|' in var:
+                var_expr, default_value = [v.strip() for v in var.split('|', 1)]
+            else:
+                var_expr, default_value = var, None
 
-        source = match.group(1).split('.')[0]  # Get the source (config or context)
-        field = match.group(2).strip()  # Get the field name
-        default_value = match.group(3)  # Get the default value
+            # Determine source and field
+            value = None
+            if '.' in var_expr:
+                source, field = var_expr.split('.', 1)
+                if source == "config":
+                    value = self.config.get(field)
+                elif source == "context":
+                    value = context.get(field)
+            else:
+                # Simple variable (attribute of self)
+                if hasattr(self, var_expr):
+                    value = getattr(self, var_expr)
 
-        # Get value from appropriate source
-        if source == "config":
-            value = self.config.get(field)
-        else:  # context
-            value = context.get(field)
+            # Apply default if missing
+            if value is None and default_value is not None:
+                value = default_value
 
-        if value:
-            # replace variable value in string
-            value = path.replace(match.group(0), str(value))
-        elif default_value:
-            # return default value
-            value = default_value.strip()
-        else:
-            value = path
-    
+            # Replace in result
+            if value is not None:
+                path = path.replace(f"{{{full_var}}}", str(value))
+
+        # Optionally parse path object structure
         if parse:
-            return self.parse_objs(value)
-        return value
+            return self.parse_objs(path)
+        return path
         
     def eval_expression(self, expr: str, context: dict) -> str | None:
         """
@@ -380,7 +385,8 @@ class HotglueStream(RESTStream):
                 start_page = 1
             previous_token = previous_token or start_page
             if next(self.parse_response(response), None):
-                return previous_token + 1
+                next_page_token = previous_token + 1
+
         if pagination_type.get("type") == "offset":
             offset = None
             page_jsonpath = pagination_type.get("next_page_jsonpath")
@@ -399,12 +405,18 @@ class HotglueStream(RESTStream):
                     if len(cursor)>0:
                         offset = cursor[0]
             
-            return offset
+            next_page_token = offset
         
         if pagination_type.get("type") == "incremental_offset":
             previous_token = previous_token or 0
             page_size = pagination_type.get("page_size")
-            return previous_token + page_size
+            if len(list(self.parse_response(response))) < page_size:
+                return None
+            next_page_token = previous_token + page_size
+
+        if pagination_type.get("embedded"):
+            self.next_page_token = next_page_token
+        return next_page_token
 
 
     def get_starting_time(self, context):
@@ -432,6 +444,11 @@ class HotglueStream(RESTStream):
             start_date = int(start_date.timestamp() * 1000)
         else:
             start_date = start_date.strftime(datetime_format)
+        
+        # add to stream
+        if self.incremental_sync.get("embedded"):
+            self.replication_key_value = start_date
+
         return {incremental_data["field_name"]: start_date}
 
     def get_url_params(
@@ -667,3 +684,13 @@ class HotglueStream(RESTStream):
             else:
                 yield from super().get_records(context)
 
+
+    def parse_response(self, response: requests.Response) -> Iterable[dict]:
+        if "text/xml" in response.headers.get("Content-Type", ""):
+            json_response = xml_to_dict(response)
+            for record in extract_jsonpath(self.records_jsonpath, input=json_response):
+                record = record.get("field")
+                record = {field["@name"]: field["@value"] for field in record}
+                yield record
+        else:
+            return super().parse_response(response)
