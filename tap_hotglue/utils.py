@@ -4,6 +4,9 @@ from pendulum import parse
 from datetime import datetime
 import isodate
 from datetime import timedelta
+import json
+from lxml import etree
+import xmltodict
 
 def get_json_path(path):
     if not "*" in path:
@@ -85,3 +88,15 @@ def iso_duration_to_timedelta(duration_str: str) -> timedelta:
     # Approximate months and years
     days = duration.years * 365 + duration.months * 30
     return timedelta(days=days, seconds=duration.tdelta.seconds, microseconds=duration.tdelta.microseconds)
+
+def xml_to_dict(response):
+    try:
+        #clean invalid xml characters
+        my_parser = etree.XMLParser(recover=True)
+        xml = etree.fromstring(response.content, parser=my_parser)
+        cleaned_xml_string = etree.tostring(xml)
+        #parse xml to dict
+        data = json.loads(json.dumps(xmltodict.parse(cleaned_xml_string)))
+    except:
+        data = json.loads(json.dumps(xmltodict.parse(response.content.decode("utf-8-sig").encode("utf-8"))))
+    return data
