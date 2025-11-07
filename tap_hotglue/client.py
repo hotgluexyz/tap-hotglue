@@ -344,6 +344,8 @@ class HotglueStream(RESTStream):
             # field name for pagination can come from page_token_option or page_size_option
             if page_token_option:= stream_pagination.get("page_token_option"):
                 processed_pagination["page_name"] = page_token_option.get("field_name")
+                if inject_into := page_token_option.get('inject_into'):
+                    processed_pagination["location"] = inject_into
             if page_size_options := stream_pagination.get("page_size_option", {}):
                 processed_pagination["page_size_parameter"] = page_size_options.get("field_name")
 
