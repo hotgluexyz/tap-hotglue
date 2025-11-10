@@ -695,4 +695,4 @@ class HotglueStream(RESTStream):
                 record = {field["@name"]: field["@value"] for field in record}
                 yield record
         else:
-            return super().parse_response(response)
+            yield from super().parse_response(response)
