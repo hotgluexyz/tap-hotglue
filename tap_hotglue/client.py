@@ -90,6 +90,16 @@ class HotglueStream(RESTStream):
                     type = "bearer"
                     # TODO: not sure if this assumption is true for all cases
                     self.authentication["value"] = self.authentication["api_token"]
+                case "OAuthAuthenticator":
+                    type = "oauth"
+                    self.authentication["token_url"] = self.get_field_value(self.authentication.get("token_refresh_endpoint"))
+                    self.authentication["request_payload"] = self.authentication.get("refresh_request_body") or {
+                        "client_id": '{{ config["client_id"] }}',
+                        "client_secret": '{{ config["client_secret"] }}',
+                        "redirect_uri": '{{ config["redirect_uri"] }}',
+                        "refresh_token": '{{ config["refresh_token"] }}',
+                        "grant_type": "refresh_token",
+                    }
                 case "SessionTokenAuthenticator":
                     type = "bearer"
                     self.authentication["token_type"] = "request"
@@ -234,7 +244,7 @@ class HotglueStream(RESTStream):
         # ---------- 1. Support direct Airbyte-style variables ----------
         # Handle Airbyte tap format: {{ config['field_name'] }}
         if hasattr(self, '_tap') and self._tap.airbyte_tap:
-            match = re.search(r"\{\{\s*config\['([^']+)'\]\s*\}\}", path)
+            match = re.search(r"\{\{\s*config\[['\"]([^'\"]+)['\"]\]\s*\}\}", path)
             if match:
                 field = match.group(1).strip()
                 value = self.config.get(field)
@@ -377,6 +387,8 @@ class HotglueStream(RESTStream):
     ) -> Optional[Any]:
         """Return a token for identifying next page or None if no more pages."""
         pagination_type = self.get_pagination_type()
+        next_page_token = None
+
         if not pagination_type:
             self.logger.info(f"No pagination method defined for stream {self.name}")
             return
