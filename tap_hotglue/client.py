@@ -11,7 +11,7 @@ from singer_sdk.streams import RESTStream
 from singer_sdk.authenticators import APIKeyAuthenticator, BasicAuthenticator, BearerTokenAuthenticator
 import re
 from singer_sdk import typing as th
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 from singer_sdk.exceptions import FatalAPIError, RetriableAPIError
 from pathlib import Path
 from typing import Any, Dict, Optional, Union, List, Iterable, Callable, cast
@@ -108,11 +108,19 @@ class HotglueStream(RESTStream):
 
         if type == "api":
             # get api key field used in config
+            api_key_value = self.get_field_value(self.authentication["value"])
+            location = self.authentication.get("location", "header")
+
+            # If API key is being added to URL params, decode it first to prevent double encoding
+            # The requests library will encode it automatically when building the URL
+            if location in ["params", "request_parameter", "query"]:
+                api_key_value = unquote(api_key_value)
+
             return APIKeyAuthenticator.create_for_stream(
                 self,
                 key=self.authentication.get("key", "x-api-key"),
-                value=self.get_field_value(self.authentication["value"]),
-                location=self.authentication.get("location", "header")
+                value=api_key_value,
+                location=location
             )
         elif type == "basic":
             return BasicAuthenticator.create_for_stream(
