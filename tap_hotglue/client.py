@@ -551,10 +551,10 @@ class HotglueStream(RESTStream):
 
     def post_process(self, row: dict, context: Optional[dict]) -> dict:
         """Process datetime fields in the data structure, including nested ones."""
-        if (
-            self.incremental_sync
-            and self.incremental_sync.get("datetime_format") in ["timestamp", "timestamp_ms"]
-        ) or self.incremental_sync.get("state_datetime_format"):
+        if self.incremental_sync and (
+            self.incremental_sync.get("datetime_format") in ["timestamp", "timestamp_ms"]
+            or self.incremental_sync.get("state_datetime_format")
+        ):
             return self._process_datetime_fields(row)
         # Add time_extracted field if specified as rep key
         if self.incremental_sync and self.incremental_sync.get("replication_key") == "time_extracted":
