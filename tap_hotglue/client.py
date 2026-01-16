@@ -6,22 +6,22 @@ from typing import Any, Dict, Optional, Union, List, Iterable
 
 from memoization import cached
 from cached_property import cached_property
-from singer_sdk.helpers.jsonpath import extract_jsonpath
-from singer_sdk.streams import RESTStream
-from singer_sdk.authenticators import APIKeyAuthenticator, BasicAuthenticator, BearerTokenAuthenticator
+from hotglue_singer_sdk.helpers.jsonpath import extract_jsonpath
+from hotglue_singer_sdk.streams import RESTStream
+from hotglue_singer_sdk.authenticators import APIKeyAuthenticator, BasicAuthenticator, BearerTokenAuthenticator
 import re
-from singer_sdk import typing as th
+from hotglue_singer_sdk import typing as th
 from urllib.parse import urlparse, parse_qs, unquote
-from singer_sdk.exceptions import FatalAPIError, RetriableAPIError
+from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
 from pathlib import Path
 from typing import Any, Dict, Optional, Union, List, Iterable, Callable, cast
 import backoff
 from tap_hotglue.exceptions import TooManyRequestsError
 from pendulum import parse
-from datetime import datetime
+from datetime import datetime, timezone
 from tap_hotglue.utils import get_json_path, xml_to_dict
 from tap_hotglue.auth import BearerTokenRequestAuthenticator, OAuth2Authenticator
-from singer_sdk.helpers._typing import is_datetime_type
+from hotglue_singer_sdk.helpers._typing import is_datetime_type
 import json
 import ast
 import copy
@@ -29,7 +29,6 @@ import cloudscraper
 from jinja2 import Template
 from tap_hotglue.airbyte_helpers import now_utc, format_datetime
 from tap_hotglue.utils import iso_duration_to_timedelta
-from datetime import timezone
 
 
 class HotglueStream(RESTStream):
@@ -214,6 +213,12 @@ class HotglueStream(RESTStream):
                 return ast.literal_eval(obj)   
         return obj
 
+    def process_replication_key_value(self, value):
+        state_fmt = self.incremental_sync.get("state_datetime_format")
+        if state_fmt and not state_fmt.startswith(("%Y-%m-%d", "%Y/%m/%d")):
+            return datetime.strptime(value, self.incremental_sync.get("state_datetime_format")).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return value
+
     def _process_datetime_fields(self, data, path=""):
         """Recursively process datetime fields in the data structure."""
         if not isinstance(data, (dict, list)):
@@ -241,6 +246,8 @@ class HotglueStream(RESTStream):
                     result[key] = dt_field.isoformat()
                 except (ValueError, TypeError):
                     result[key] = value
+            elif key == self.replication_key:
+                result[key] = self.process_replication_key_value(value)
             elif isinstance(value, (dict, list)):
                 result[key] = self._process_datetime_fields(value, current_path)
             else:
@@ -440,16 +447,6 @@ class HotglueStream(RESTStream):
             self.next_page_token = next_page_token
         return next_page_token
 
-
-    def get_starting_time(self, context):
-        if self.start_date:
-            return self.start_date
-        start_date = self.config.get("start_date")
-        if start_date:
-            start_date = parse(self.config.get("start_date"))
-        rep_key = self.get_starting_timestamp(context)
-        return rep_key or start_date
-
     def get_incremental_sync_params(self, incremental_data, context):
         if not incremental_data.get("field_name"):
             self.logger.warning(f"Incremental sync filter field name was not provided for stream {self.name}, running a fullsync.")
@@ -459,7 +456,8 @@ class HotglueStream(RESTStream):
             datetime_format = "%Y-%m-%dT%H:%M:%SZ"
             self.logger.warning(f"Datetime format for incremental_sync not provided for stream {self.name}, using '{datetime_format}' as default")
         # get start_date
-        start_date = self.get_starting_time(context)
+        is_inclusive = self.incremental_sync.get("is_inclusive", False)
+        start_date = self.get_starting_time(context, is_inclusive)
         if datetime_format == "timestamp":
             start_date = int(start_date.timestamp())
         elif datetime_format == "timestamp_ms":
@@ -556,10 +554,8 @@ class HotglueStream(RESTStream):
         if (
             self.incremental_sync
             and self.incremental_sync.get("datetime_format") in ["timestamp", "timestamp_ms"]
-        ):
+        ) or self.incremental_sync.get("state_datetime_format"):
             return self._process_datetime_fields(row)
-        
-
         # Add time_extracted field if specified as rep key
         if self.incremental_sync and self.incremental_sync.get("replication_key") == "time_extracted":
             row["time_extracted"] = datetime.now().isoformat()

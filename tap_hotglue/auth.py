@@ -5,10 +5,10 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import requests
-from singer_sdk.authenticators import APIAuthenticatorBase
-from singer_sdk.streams import Stream as RESTStreamBase
-from singer_sdk.exceptions import FatalAPIError, RetriableAPIError
-from singer_sdk.helpers.jsonpath import extract_jsonpath
+from hotglue_singer_sdk.authenticators import APIAuthenticatorBase
+from hotglue_singer_sdk.streams import Stream as RESTStreamBase
+from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
+from hotglue_singer_sdk.helpers.jsonpath import extract_jsonpath
 import backoff
 
 

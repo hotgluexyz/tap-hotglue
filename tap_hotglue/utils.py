@@ -1,5 +1,5 @@
 import re
-from singer_sdk import typing as th
+from hotglue_singer_sdk import typing as th
 from pendulum import parse
 from datetime import datetime
 import isodate

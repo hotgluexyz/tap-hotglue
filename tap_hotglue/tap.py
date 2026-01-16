@@ -2,11 +2,11 @@
 
 from typing import List
 from functools import cached_property
-from singer_sdk import Tap, Stream
-from singer_sdk import typing as th  # JSON schema typing helpers
+from hotglue_singer_sdk import Tap, Stream
+from hotglue_singer_sdk import typing as th  # JSON schema typing helpers
 from pathlib import Path, PurePath
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
-from singer_sdk.helpers._util import read_json_file
+from hotglue_singer_sdk.helpers._util import read_json_file
 from tap_hotglue.utils import get_json_path, snakecase
 import yaml
 import re

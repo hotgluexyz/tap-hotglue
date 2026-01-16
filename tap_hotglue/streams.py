@@ -1,6 +1,6 @@
 """Stream type classes for tap-hotglue."""
 
-from singer_sdk import typing as th  # JSON Schema typing helpers
+from hotglue_singer_sdk import typing as th  # JSON Schema typing helpers
 
 from tap_hotglue.client import HotglueStream
 
