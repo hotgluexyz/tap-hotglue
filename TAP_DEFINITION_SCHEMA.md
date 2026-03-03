@@ -271,6 +271,8 @@ Configures incremental data synchronization based on a replication key.
     "state_datetime_format": "%m/%d/%Y %I:%M:%S %p",
     "location": "request_parameter",
     "embedded": true,
+    "value_template": "findByDate;auditDate={replication_key_value}",
+    "replication_key_sources": ["updated_at", "created_at"],
     "is_inclusive": true,
     "step": "P1D"
 }
@@ -288,6 +290,8 @@ Configures incremental data synchronization based on a replication key.
 | `location` | string | No | Where to include the date filter. Values: `"request_parameter"`, `"body"`, `"base_url"` |
 | `path` | string | No | JSONPath for nested placement in request body |
 | `embedded` | boolean | No | Whether the filter is embedded in custom query params |
+| `value_template` | string | No | When set, the parameter value is this string with `{replication_key_value}` replaced by the formatted date. Use when the API expects a composite value (e.g. `findByDate;auditDate={replication_key_value}`) instead of the raw date. |
+| `replication_key_sources` | array of strings | No | When set, the replication key is a synthetic field: each record gets `replication_key` = first non-null value from these source fields (e.g. `["updated_at", "created_at"]` for “updated or created”). Use when the API returns only one of the dates per record. Remember to include the synthetic field in the stream schema. |
 | `is_inclusive` | boolean | No | Whether the filter is inclusive (>=) or exclusive (>) |
 | `step` | string | No | ISO 8601 duration for stepping through date ranges (e.g., `"P1D"` for 1 day) |
 
