@@ -471,7 +471,7 @@ class HotglueStream(RESTStream):
 
         value_template = incremental_data.get("value_template")
         if value_template:
-            param_value = value_template.replace("{replication_key_value}", start_date)
+            param_value = value_template.replace("{replication_key_value}", str(start_date))
             return {incremental_data["field_name"]: param_value}
         return {incremental_data["field_name"]: start_date}
 
@@ -559,10 +559,12 @@ class HotglueStream(RESTStream):
             self.incremental_sync.get("datetime_format") in ["timestamp", "timestamp_ms"]
             or self.incremental_sync.get("state_datetime_format")
         ):
-            return self._process_datetime_fields(row)
+            row = self._process_datetime_fields(row)
+
         # Add time_extracted field if specified as rep key
         if self.incremental_sync and self.incremental_sync.get("replication_key") == "time_extracted":
             row["time_extracted"] = datetime.now().isoformat()
+
         # Synthetic replication key: coalesce from replication_key_sources (e.g. update or create date)
         replication_key_sources = self.incremental_sync and self.incremental_sync.get("replication_key_sources")
         if replication_key_sources:
