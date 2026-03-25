@@ -722,7 +722,7 @@ class HotglueStream(RESTStream):
                 yield from super().get_records(context)
 
 
-    def check_body_for_error(self, body: dict) -> bool:
+    def check_body_for_error(self, body: dict):
         if self.error_response_json_path:
             error_response = next(extract_jsonpath(self.error_response_json_path, input=body), None)
             if error_response:

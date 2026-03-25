@@ -174,6 +174,7 @@ Each stream represents an API endpoint/resource to sync.
 | `primary_keys` | string/array | No | Primary key field(s) for the stream |
 | `schema` | object | No | JSON Schema for the stream's records (auto-detected if not provided) |
 | `record_selector` | object | No | Configuration for extracting records from response |
+| `error_message_path` | string | No | JSON path to error message in a JSON response. Will raise error message if found |
 | `pagination` | object | No | Pagination configuration |
 | `incremental_sync` | object | No | Incremental sync configuration |
 | `custom_query_params` | array | No | Custom query parameters to include in requests |
@@ -201,6 +202,25 @@ Defines how to extract records from the API response.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `field_path` | string | Yes | JSONPath expression to extract records. Examples: `"$.data[*]"`, `"$.result.record[*]"`, `"Suppliers"` |
+
+---
+
+## Error message selector
+
+### Error Message Selector
+
+Defines how to extract and raise errors from API responses when an error message is present in the body.
+
+```json
+"error_message_path": "$.error.message"
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `error_message_path` | string | No | JSONPath expression pointing to the error message in the response. If found, the tap will raise this error and halt sync for the stream. Example: `"$.error.message"` for `{ "error": { "message": "Invalid API key" }}` |
+
+If specified, the tap will check the given JSONPath in each response. If a value is found, it will raise an Exception containing the retrieved error message.
+
 
 ---
 
