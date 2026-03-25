@@ -726,7 +726,7 @@ class HotglueStream(RESTStream):
         if "text/xml" in response.headers.get("Content-Type", ""):
             json_response = xml_to_dict(response)
             if self.error_response_json_path:
-                error_response = next(extract_jsonpath(get_json_path(self.error_response_json_path), input=json_response), None)
+                error_response = next(extract_jsonpath(self.error_response_json_path, input=json_response), None)
                 if error_response:
                     raise Exception(f"Error: {error_response}")
             for record in extract_jsonpath(self.records_jsonpath, input=json_response):
