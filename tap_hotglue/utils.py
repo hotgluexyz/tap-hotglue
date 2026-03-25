@@ -9,7 +9,7 @@ from lxml import etree
 import xmltodict
 
 def get_json_path(path):
-    if not "*" in path:
+    if "*" not in path:
         path = f"{path}.*"
     path_parts = path.split(".")
     if len(path_parts) > 1:
@@ -53,26 +53,26 @@ def is_unix_timestamp(self, number):
 def get_jsonschema_type(obj):
         dtype = type(obj)
 
-        if dtype == int:
+        if dtype is int:
             return th.IntegerType()
-        if dtype == float:
+        if dtype is float:
             return th.NumberType()
-        if dtype == str:
+        if dtype is str:
             try:
                 parse(obj)
                 return th.DateTimeType
             except:
                 return th.StringType()
-        if dtype == bool:
+        if dtype is bool:
             return th.BooleanType()
-        if dtype == list:
+        if dtype is list:
             if len(obj) > 0:
                 return th.ArrayType(get_jsonschema_type(obj[0]))
             else:
                 return th.ArrayType(
                     th.CustomType({"type": ["number", "string", "object"]})
                 )
-        if dtype == dict:
+        if dtype is dict:
             obj_props = []
             for key in obj.keys():
                 obj_props.append(th.Property(key, get_jsonschema_type(obj[key])))

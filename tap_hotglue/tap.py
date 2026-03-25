@@ -4,8 +4,6 @@ from typing import List
 from functools import cached_property
 from hotglue_singer_sdk import Tap, Stream
 from hotglue_singer_sdk import typing as th  # JSON schema typing helpers
-from pathlib import Path, PurePath
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
 from hotglue_singer_sdk.helpers._util import read_json_file
 from tap_hotglue.utils import get_json_path, snakecase
 import yaml
@@ -127,132 +125,130 @@ class TapHotglue(Tap):
         """
         return re.sub(r"\{\{\s*stream_partition\.(\w+)\s*\}\}", r"{\1}", path)
 
+    def _parse_stream_identity(self, stream_data: dict) -> tuple:
+        """Extract and validate name, path, http_method from stream_data."""
+        try:
+            name = stream_data["name"]
+            path = stream_data["retriever"]["requester"]["path"] if self.airbyte_tap else stream_data.get("path")
+        except KeyError:
+            raise Exception(f"Name and/or path values were not found when trying to build the stream for stream_data {stream_data}")
+        http_method = stream_data["retriever"]["requester"]["http_method"] if self.airbyte_tap else stream_data.get("method")
+        if not name or (not path and http_method != "STATIC"):
+            raise Exception(f"Name and/or path values were not found when trying to build the stream for stream_data {stream_data}")
+        stream_id = stream_data.get("id") or snakecase(name)
+        name = name.replace(" ", "")
+        return name, stream_id, path, http_method
+
+    def _apply_params_and_payload(self, stream_data: dict, stream_fields: dict) -> None:
+        """Populate params and payload in stream_fields from stream_data."""
+        if not self.airbyte_tap and stream_data.get("custom_query_params"):
+            stream_fields["params"] = stream_data["custom_query_params"]
+
+        if self.airbyte_tap and (airbyte_params := stream_data.get("retriever", {}).get("requester", {}).get("request_parameters")):
+            stream_fields["params"] = [{"name": k, "value": v} for k, v in airbyte_params.items()]
+
+        if stream_data.get("custom_request_payload") is not None:
+            stream_fields["payload"] = stream_data["custom_request_payload"]
+
+        if self.airbyte_tap and (request_body := stream_data.get("retriever", {}).get("requester", {}).get("request_body_json")):
+            stream_fields["payload"] = [{"name": k, "value": v} for k, v in request_body.items()]
+
+    def _apply_jsonpath_and_schema(self, stream_data: dict, name: str, stream_fields: dict) -> None:
+        """Populate records_jsonpath, error_response_json_path, and json_schema in stream_fields."""
+        if not self.airbyte_tap and stream_data.get("record_selector", {}).get("field_path"):
+            stream_fields["records_jsonpath"] = get_json_path(stream_data["record_selector"]["field_path"])
+
+        if not self.airbyte_tap and stream_data.get("error_message_path"):
+            stream_fields["error_response_json_path"] = get_json_path(stream_data["error_message_path"])
+
+        if self.airbyte_tap and stream_data.get("retriever", {}).get("record_selector", {}).get("extractor", {}).get("field_path"):
+            json_path = ".".join(stream_data["retriever"]["record_selector"]["extractor"]["field_path"])
+            stream_fields["records_jsonpath"] = get_json_path(json_path)
+
+        if not self.airbyte_tap and stream_data.get("schema"):
+            stream_fields["json_schema"] = stream_data["schema"]
+
+        if self.airbyte_tap and self._tap_definitions.get("schemas", {}).get(name):
+            stream_fields["json_schema"] = self._tap_definitions["schemas"][name]
+
+    def _build_stream_fields(self, stream_data: dict, name: str, stream_id: str, path: str, http_method: str) -> dict:
+        """Build the stream class attribute dict for a single stream."""
+        stream_fields = {"name": stream_id, "path": path, "stream_data": stream_data}
+
+        if http_method:
+            stream_fields["rest_method"] = http_method
+
+        primary_keys = stream_data.get("primary_key") if self.airbyte_tap else stream_data.get("primary_keys")
+        if primary_keys:
+            stream_fields["primary_keys"] = primary_keys
+
+        if stream_data.get("incremental_sync"):
+            replication_key = (
+                stream_data["incremental_sync"].get("cursor_field")
+                if self.airbyte_tap
+                else stream_data["incremental_sync"].get("replication_key")
+            )
+            if replication_key:
+                stream_fields["replication_key"] = replication_key
+                stream_fields["incremental_sync"] = stream_data["incremental_sync"]
+
+        self._apply_params_and_payload(stream_data, stream_fields)
+        self._apply_jsonpath_and_schema(stream_data, name, stream_fields)
+
+        return stream_fields
+
+    def _resolve_parent_stream(self, stream_data: dict, stream_fields: dict, path: str) -> str | None:
+        """Return the parent stream name (and update stream_fields path for child streams)."""
+        parent_stream_name = stream_data.get("parent_stream")
+
+        if self.airbyte_tap:
+            # TODO: should we handle multiple partition routers?
+            partition_router = stream_data.get("retriever", {}).get("partition_router", {})
+            partition_router = partition_router[0] if isinstance(partition_router, list) else partition_router
+            parent_stream = partition_router.get("parent_stream_configs")
+            if parent_stream:
+                parent_stream_name = (
+                    parent_stream[0].get("stream").get("name")
+                    or parent_stream[0].get("stream").get("$ref").split("/")[-1]
+                )
+                stream_fields["path"] = self.normalize_path(path)
+
+        return parent_stream_name
+
     def create_streams(self):
-        streams = self._tap_definitions.get("definitions").get("streams") if self.airbyte_tap else self._tap_definitions.get("streams", [])
+        streams = (
+            self._tap_definitions.get("definitions").get("streams")
+            if self.airbyte_tap
+            else self._tap_definitions.get("streams", [])
+        )
         stream_classes = {}
 
-        # standarize streams to be a dictionary
         if isinstance(streams, list):
-            streams = {stream['name']:stream for stream in streams}
+            streams = {stream["name"]: stream for stream in streams}
 
-        # order streams to process parent streams first
         ordered_streams, parent_streams_child_context = self.sort_streams(streams)
 
         if ordered_streams:
-            streams = {name:streams[name] for name in ordered_streams}
+            streams = {name: streams[name] for name in ordered_streams}
 
-        for stream_data in streams:
-            stream_data = streams[stream_data]
+        for stream_key in streams:
+            stream_data = streams[stream_key]
 
-            # validate all fields needed to create a stream exist:
-            try:
-                name = stream_data["name"]
-                path = stream_data['retriever']['requester']['path'] if self.airbyte_tap else stream_data.get("path")
-            except KeyError as e:
-                raise Exception(f"Name and/or path values were not found when trying to build the stream for stream_data {stream_data}")
-            
-            http_method = stream_data['retriever']['requester']['http_method'] if self.airbyte_tap else stream_data.get("method")
-            if not name or (not path and http_method != "STATIC"):
-                raise Exception(f"Name and/or path values were not found when trying to build the stream for stream_data {stream_data}")
+            name, stream_id, path, http_method = self._parse_stream_identity(stream_data)
+            stream_fields = self._build_stream_fields(stream_data, name, stream_id, path, http_method)
 
-            id = stream_data.get("id") or snakecase(name)
-            name = name.replace(" ", "")
-
-            # add required fields
-            stream_fields = {
-                "name": id,
-                "path": path,
-                "stream_data": stream_data
-            }
-
-            # add REST method if it's specified
-            if http_method:
-                stream_fields.update({"rest_method": http_method})
-
-            primary_keys = stream_data.get('primary_key') if self.airbyte_tap else stream_data.get("primary_keys")
-
-            if primary_keys:
-                stream_fields["primary_keys"] = primary_keys
-
-            if stream_data.get("incremental_sync"):
-                replication_key = stream_data["incremental_sync"].get('cursor_field') if self.airbyte_tap else stream_data["incremental_sync"].get("replication_key")
-                if replication_key:
-                    stream_fields.update({"replication_key": replication_key})
-                    stream_fields.update({"incremental_sync": stream_data["incremental_sync"]})
-
-            # add custom params
-            if not self.airbyte_tap and stream_data.get("custom_query_params"):
-                stream_fields.update({"params": stream_data["custom_query_params"]})
-            
-            if self.airbyte_tap and stream_data.get("retriever", {}).get("requester", {}).get("request_parameters"):
-                airbyte_params = stream_data.get("retriever", {}).get("requester", {}).get("request_parameters")
-                params = [{"name": key, "value": value} for key, value in airbyte_params.items()]
-                stream_fields.update({"params": params})
-
-            # add custom request payload
-            if stream_data.get("custom_request_payload") is not None:
-                stream_fields.update({"payload": stream_data["custom_request_payload"]})
-            
-            if self.airbyte_tap and (request_body := stream_data.get("retriever", {}).get("requester", {}).get("request_body_json")):
-                request_body = [{"name": key, "value": value} for key, value in request_body.items()]
-
-            # add records_jsonpath
-            if not self.airbyte_tap and stream_data.get("record_selector", {}).get("field_path"):
-                json_path = stream_data["record_selector"]["field_path"]
-                stream_fields.update({"records_jsonpath": get_json_path(json_path)})
-
-            if not self.airbyte_tap and stream_data.get("error_message_path"):
-                json_path = stream_data["error_message_path"]
-                stream_fields.update({"error_response_json_path": get_json_path(json_path)})
-
-            if self.airbyte_tap and stream_data.get("retriever", {}).get("record_selector", {}).get("extractor", {}).get("field_path"):
-                # this is an array, we need to process it to be a valid json path
-                json_path = stream_data["retriever"]["record_selector"]["extractor"]["field_path"]
-                json_path = ".".join(json_path)
-                stream_fields.update({"records_jsonpath": get_json_path(json_path)})
-            
-            # add schema
-            if not self.airbyte_tap and stream_data.get("schema"):
-                stream_fields.update({"json_schema": stream_data["schema"]})
-            
-            if self.airbyte_tap and self._tap_definitions.get("schemas").get(name):
-                stream_fields.update({"json_schema": self._tap_definitions["schemas"][name]})
-
-            # get parent stream
-            parent_stream_name = None
-            if stream_data.get("parent_stream"):
-                parent_stream_name = stream_data["parent_stream"]
-            
-            if self.airbyte_tap:
-                # TODO: should we handle multiple partition routers?
-                partition_router = stream_data.get("retriever", {}).get("partition_router", {})
-                partition_router = partition_router[0] if isinstance(partition_router, list) else partition_router
-                parent_stream = partition_router.get("parent_stream_configs")
-                if parent_stream:
-                    parent_stream_name  = parent_stream[0].get("stream").get("name") or parent_stream[0].get("stream").get("$ref").split("/")[-1]
-
-                    # update path if it's a child stream
-                    stream_fields["path"] = self.normalize_path(path)
-            
+            parent_stream_name = self._resolve_parent_stream(stream_data, stream_fields, path)
             if parent_stream_name:
                 parent_stream_class = stream_classes.get(parent_stream_name)
                 if not parent_stream_class:
-                    raise Exception(f"Parent stream {parent_stream_name} not found for stream {id}")
-                stream_fields.update({"parent_stream_type": parent_stream_class})
-            
-            # add child context data to parent stream if exists
-            if parent_streams_child_context.get(id):
-                stream_fields["stream_data"]["child_context"] = parent_streams_child_context[id]
+                    raise Exception(f"Parent stream {parent_stream_name} not found for stream {stream_id}")
+                stream_fields["parent_stream_type"] = parent_stream_class
 
-            # keep a mapping of stream name to stream class
-            stream_class = type(
-                name,
-                (BaseStream,),
-                stream_fields,
-            )
-            stream_classes[id] = stream_class
+            if parent_streams_child_context.get(stream_id):
+                stream_fields["stream_data"]["child_context"] = parent_streams_child_context[stream_id]
 
-            # yield init version of stream class
+            stream_class = type(name, (BaseStream,), stream_fields)
+            stream_classes[stream_id] = stream_class
             yield stream_class(tap=self)
 
     def discover_streams(self) -> List[Stream]:

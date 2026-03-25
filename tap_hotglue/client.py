@@ -1,34 +1,32 @@
 """REST client handling, including HotglueStream base class."""
 
-import requests
-from pathlib import Path
-from typing import Any, Dict, Optional, Union, List, Iterable
-
-from memoization import cached
-from cached_property import cached_property
-from hotglue_singer_sdk.helpers.jsonpath import extract_jsonpath
-from hotglue_singer_sdk.streams import RESTStream
-from hotglue_singer_sdk.authenticators import APIKeyAuthenticator, BasicAuthenticator, BearerTokenAuthenticator
-import re
-from hotglue_singer_sdk import typing as th
-from urllib.parse import urlparse, parse_qs, unquote
-from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
-from pathlib import Path
-from typing import Any, Dict, Optional, Union, List, Iterable, Callable, cast
-import backoff
-from tap_hotglue.exceptions import TooManyRequestsError
-from pendulum import parse
-from datetime import datetime, timezone
-from tap_hotglue.utils import get_json_path, xml_to_dict
-from tap_hotglue.auth import BearerTokenRequestAuthenticator, OAuth2Authenticator
-from hotglue_singer_sdk.helpers._typing import is_datetime_type
-import json
 import ast
 import copy
+import json
+import re
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, Iterable, Optional, Union
+from urllib.parse import parse_qs, unquote, urlparse
+
+import backoff
 import cloudscraper
+import requests
+from cached_property import cached_property
+from hotglue_singer_sdk.authenticators import (
+    APIKeyAuthenticator,
+    BasicAuthenticator,
+    BearerTokenAuthenticator,
+)
+from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
+from hotglue_singer_sdk.helpers._typing import is_datetime_type
+from hotglue_singer_sdk.helpers.jsonpath import extract_jsonpath
+from hotglue_singer_sdk.streams import RESTStream
 from jinja2 import Template
-from tap_hotglue.airbyte_helpers import now_utc, format_datetime
-from tap_hotglue.utils import iso_duration_to_timedelta
+
+from tap_hotglue.airbyte_helpers import format_datetime, now_utc
+from tap_hotglue.auth import BearerTokenRequestAuthenticator, OAuth2Authenticator
+from tap_hotglue.exceptions import TooManyRequestsError
+from tap_hotglue.utils import get_json_path, iso_duration_to_timedelta, xml_to_dict
 
 
 class HotglueStream(RESTStream):
@@ -76,6 +74,52 @@ class HotglueStream(RESTStream):
     def authentication(self):
         return self.tap_definition["definitions"].get("base_requester").get("authenticator") if self._tap.airbyte_tap else self.tap_definition.get("authentication")
 
+    def _normalize_airbyte_auth_type(self, auth_type: str) -> str:
+        """Map Airbyte authenticator type names to internal type names."""
+        match auth_type:
+            case "BasicHttpAuthenticator":
+                return "basic"
+            case "BearerAuthenticator":
+                self.authentication["value"] = self.authentication["api_token"]
+                return "bearer"
+            case "OAuthAuthenticator":
+                self.authentication["token_url"] = self.get_field_value(self.authentication.get("token_refresh_endpoint"))
+                self.authentication["request_payload"] = self.authentication.get("refresh_request_body") or {
+                    "client_id": '{{ config["client_id"] }}',
+                    "client_secret": '{{ config["client_secret"] }}',
+                    "redirect_uri": '{{ config["redirect_uri"] }}',
+                    "refresh_token": '{{ config["refresh_token"] }}',
+                    "grant_type": "refresh_token",
+                }
+                return "oauth"
+            case "SessionTokenAuthenticator":
+                self.authentication["token_type"] = "request"
+                self.authentication["endpoint"] = self.authentication.get("login_requester", {}).get("url_base")
+                self.authentication["request_payload"] = self.authentication.get("login_requester", {}).get("request_body_json")
+                return "bearer"
+        return auth_type
+
+    def _build_bearer_authenticator(self):
+        """Return the appropriate bearer authenticator based on token type."""
+        token_type = self.authentication.get("token_type", "request")
+        request_payload = self.authentication.get("request_payload", [])
+        if token_type == "request" and request_payload:
+            if isinstance(request_payload, dict):
+                payload = {k: self.get_field_value(v) for k, v in request_payload.items() if v}
+            else:
+                payload = {self.get_field_value(obj["name"]): self.get_field_value(obj["value"]) for obj in request_payload}
+            return BearerTokenRequestAuthenticator(
+                self,
+                auth_endpoint=self.get_field_value(self.authentication.get("endpoint", "")),
+                request_payload=payload,
+                token_path=self.authentication.get("value"),
+                token_expiry_time=self.authentication.get("token_expiry_time", 3600),
+            )
+        return BearerTokenAuthenticator.create_for_stream(
+            self,
+            token=self.get_field_value(self.authentication.get("value", "")),
+        )
+
     @property
     def authenticator(self):
         """Return a new authenticator object."""
@@ -83,28 +127,7 @@ class HotglueStream(RESTStream):
 
         if self._tap.airbyte_tap:
             # TODO: need to handle other auth types
-            match type:
-                case "BasicHttpAuthenticator":
-                    type = "basic"
-                case "BearerAuthenticator":
-                    type = "bearer"
-                    # TODO: not sure if this assumption is true for all cases
-                    self.authentication["value"] = self.authentication["api_token"]
-                case "OAuthAuthenticator":
-                    type = "oauth"
-                    self.authentication["token_url"] = self.get_field_value(self.authentication.get("token_refresh_endpoint"))
-                    self.authentication["request_payload"] = self.authentication.get("refresh_request_body") or {
-                        "client_id": '{{ config["client_id"] }}',
-                        "client_secret": '{{ config["client_secret"] }}',
-                        "redirect_uri": '{{ config["redirect_uri"] }}',
-                        "refresh_token": '{{ config["refresh_token"] }}',
-                        "grant_type": "refresh_token",
-                    }
-                case "SessionTokenAuthenticator":
-                    type = "bearer"
-                    self.authentication["token_type"] = "request"
-                    self.authentication["endpoint"] = self.authentication.get("login_requester", {}).get("url_base") #TODO test with airbyte endpoint format
-                    self.authentication["request_payload"] = self.authentication.get("login_requester", {}).get("request_body_json")
+            type = self._normalize_airbyte_auth_type(type)
 
         if type == "api":
             # get api key field used in config
@@ -129,37 +152,14 @@ class HotglueStream(RESTStream):
                 password=self.get_field_value(self.authentication.get("password", "")),
             )
         elif type == "bearer":
-            token_type = self.authentication.get("token_type", "request")
-            # get request payload definition
-            request_payload = self.authentication.get("request_payload", [])
-            if token_type == "request" and request_payload:
-
-                # build payload, filling config values
-                if isinstance(request_payload, dict):
-                    payload = {k:self.get_field_value(v) for k,v in request_payload.items() if v}
-                else:
-                    payload = {self.get_field_value(obj["name"]):self.get_field_value(obj["value"]) for obj in request_payload}
-
-                return BearerTokenRequestAuthenticator(
-                    self,
-                    auth_endpoint=self.get_field_value(self.authentication.get("endpoint", "")),
-                    request_payload=payload,
-                    token_path=self.authentication.get("value"),
-                    token_expiry_time=self.authentication.get("token_expiry_time", 3600)
-                )
-            else:
-                return BearerTokenAuthenticator.create_for_stream(
-                    self,
-                    token=self.get_field_value(self.authentication.get("value", ""))
-                )
+            return self._build_bearer_authenticator()
         elif type == "oauth":
             oauth_url = self.get_field_value(self.authentication.get("token_url"))
             request_payload = self.authentication.get("request_payload", [])
             if isinstance(request_payload, dict):
-                oauth_request_body = {k:self.get_field_value(v) for k,v in request_payload.items() if v}
+                oauth_request_body = {k: self.get_field_value(v) for k, v in request_payload.items() if v}
             else:
-                oauth_request_body = {self.get_field_value(obj["name"]):self.get_field_value(obj["value"]) for obj in request_payload}
-
+                oauth_request_body = {self.get_field_value(obj["name"]): self.get_field_value(obj["value"]) for obj in request_payload}
             return OAuth2Authenticator(self, self.config, auth_endpoint=oauth_url, oauth_request_body=oauth_request_body)
     
     def get_airbyte_stream_headers(self):
@@ -255,74 +255,75 @@ class HotglueStream(RESTStream):
                 result[key] = value
         return result
 
-    def get_field_value(self, path, context=dict(), parse=False):
+    def _resolve_airbyte_config_var(self, path: str) -> str | None:
+        """Resolve {{ config['field'] }} style variables used by Airbyte taps.
 
-        # ---------- 1. Support direct Airbyte-style variables ----------
-        # Handle Airbyte tap format: {{ config['field_name'] }}
-        if hasattr(self, '_tap') and self._tap.airbyte_tap:
-            match = re.search(r"\{\{\s*config\[['\"]([^'\"]+)['\"]\]\s*\}\}", path)
-            if match:
-                field = match.group(1).strip()
-                value = self.config.get(field)
-                if value:
-                    return path.replace(match.group(0), str(value))
-                else:
-                    return path
-        
-        # ---------- 2. Support jinja variables ----------
-        jinja_match = re.fullmatch(r"\{\{\s*(.*?)\s*\}\}", path)
-        if jinja_match:
-            # Use the whole path as the template
-            template = Template(path)
+        Returns the resolved string, or None if the pattern was not found.
+        """
+        match = re.search(r"\{\{\s*config\[['\"]([^'\"]+)['\"]\]\s*\}\}", path)
+        if not match:
+            return None
+        field = match.group(1).strip()
+        value = self.config.get(field)
+        return path.replace(match.group(0), str(value)) if value else path
 
-            # Context for rendering
-            safe_context = {
-                "config": self.config,
-                "context": context,
-                "now_utc": now_utc,
-                "format_datetime": format_datetime,
-                "stream_slice": context,
-            }
+    def _render_jinja_template(self, path: str, context: dict) -> str | None:
+        """Render a Jinja2 {{ ... }} template expression.
 
-            try:
-                # Render the template
-                result = template.render(safe_context)
-                return str(result)
-            except Exception as e:
-                raise ValueError(f"Failed to render template '{path}': {e}")
-        
-        matches = re.findall(r"\{([^}]+)\}", path)
-        for full_var in matches:
+        Returns the rendered string, or None if the path is not a Jinja template.
+        """
+        if not re.fullmatch(r"\{\{\s*(.*?)\s*\}\}", path):
+            return None
+        template = Template(path)
+        safe_context = {
+            "config": self.config,
+            "context": context,
+            "now_utc": now_utc,
+            "format_datetime": format_datetime,
+            "stream_slice": context,
+        }
+        try:
+            return str(template.render(safe_context))
+        except Exception as e:
+            raise ValueError(f"Failed to render template '{path}': {e}")
+
+    def _substitute_bracket_vars(self, path: str, context: dict) -> str:
+        """Replace {var} placeholders with values from config, context, or stream attributes."""
+        for full_var in re.findall(r"\{([^}]+)\}", path):
             var = full_var.strip()
-
-            # Split optional default
-            if '|' in var:
-                var_expr, default_value = [v.strip() for v in var.split('|', 1)]
-            else:
-                var_expr, default_value = var, None
-
-            # Determine source and field
+            var_expr, default_value = (
+                [v.strip() for v in var.split("|", 1)] if "|" in var else (var, None)
+            )
             value = None
-            if '.' in var_expr:
-                source, field = var_expr.split('.', 1)
+            if "." in var_expr:
+                source, field = var_expr.split(".", 1)
                 if source == "config":
                     value = self.config.get(field)
                 elif source == "context":
                     value = context.get(field)
-            else:
-                # Simple variable (attribute of self)
-                if hasattr(self, var_expr):
-                    value = getattr(self, var_expr)
-
-            # Apply default if missing
+            elif hasattr(self, var_expr):
+                value = getattr(self, var_expr)
             if value is None and default_value is not None:
                 value = default_value
-
-            # Replace in result
             if value is not None:
                 path = path.replace(f"{{{full_var}}}", str(value))
+        return path
 
-        # Optionally parse path object structure
+    def get_field_value(self, path, context=dict(), parse=False):
+        # ---------- 1. Support direct Airbyte-style variables ----------
+        if hasattr(self, "_tap") and self._tap.airbyte_tap:
+            resolved = self._resolve_airbyte_config_var(path)
+            if resolved is not None:
+                return resolved
+
+        # ---------- 2. Support jinja variables ----------
+        rendered = self._render_jinja_template(path, context)
+        if rendered is not None:
+            return rendered
+
+        # ---------- 3. Substitute {var} placeholders ----------
+        path = self._substitute_bracket_vars(path, context)
+
         if parse:
             return self.parse_objs(path)
         return path
@@ -398,51 +399,57 @@ class HotglueStream(RESTStream):
             if pagination_type:
                 return pagination_type[0]
 
+    def _get_page_increment_token(self, pagination_type: dict, previous_token: Optional[Any], response: requests.Response) -> Optional[Any]:
+        start_page = pagination_type.get("start_page")
+        if start_page is None:
+            self.logger.info(f"No start page provided for stream {self.name}, using 1 as default")
+            start_page = 1
+        previous_token = previous_token or start_page
+        if next(self.parse_response(response), None):
+            return previous_token + 1
+        return None
+
+    def _get_offset_token(self, pagination_type: dict, response: requests.Response) -> Optional[Any]:
+        offset = None
+        if page_jsonpath := pagination_type.get("next_page_jsonpath"):
+            offset = next(extract_jsonpath(get_json_path(page_jsonpath), input=response.json()), None)
+        elif page_value := pagination_type.get("page_value"):
+            offset = self.eval_expression(page_value, {"response": response.json()})
+
+        if offset and isinstance(offset, str) and offset.startswith("http"):
+            parsed_url = urlparse(offset)
+            query_params = parse_qs(parsed_url.query)
+            cursor = query_params.get(pagination_type.get("page_name"))
+            if cursor and len(cursor) > 0:
+                offset = cursor[0]
+        return offset
+
+    def _get_incremental_offset_token(self, pagination_type: dict, previous_token: Optional[Any], response: requests.Response) -> Optional[Any]:
+        previous_token = previous_token or 0
+        page_size = pagination_type.get("page_size")
+        if len(list(self.parse_response(response))) < page_size:
+            return None
+        return previous_token + page_size
+
     def get_next_page_token(
         self, response: requests.Response, previous_token: Optional[Any]
     ) -> Optional[Any]:
         """Return a token for identifying next page or None if no more pages."""
         pagination_type = self.get_pagination_type()
-        next_page_token = None
 
         if not pagination_type:
             self.logger.info(f"No pagination method defined for stream {self.name}")
-            return
-        if pagination_type.get("type") == "page-increment":
-            start_page = pagination_type.get("start_page")
-            if start_page is None:
-                self.logger.info(f"No start page provided for stream {self.name}, using 1 as default")
-                start_page = 1
-            previous_token = previous_token or start_page
-            if next(self.parse_response(response), None):
-                next_page_token = previous_token + 1
+            return None
 
-        if pagination_type.get("type") == "offset":
-            offset = None
-            page_jsonpath = pagination_type.get("next_page_jsonpath")
-            if page_jsonpath := pagination_type.get("next_page_jsonpath"):
-                offset = next(extract_jsonpath(get_json_path(page_jsonpath), input=response.json()), None)
-            elif page_value := pagination_type.get("page_value"):
-                offset = self.eval_expression(page_value, {"response": response.json()})
-
-            # If offset is a url, extract the paging query parameter
-            if offset and isinstance(offset, str) and offset.startswith("http"):
-                parsed_url = urlparse(offset)
-                # Extract the query parameters
-                query_params = parse_qs(parsed_url.query)
-                cursor = query_params.get(pagination_type.get("page_name"))
-                if cursor:
-                    if len(cursor)>0:
-                        offset = cursor[0]
-            
-            next_page_token = offset
-        
-        if pagination_type.get("type") == "incremental_offset":
-            previous_token = previous_token or 0
-            page_size = pagination_type.get("page_size")
-            if len(list(self.parse_response(response))) < page_size:
-                return None
-            next_page_token = previous_token + page_size
+        pag_type = pagination_type.get("type")
+        if pag_type == "page-increment":
+            next_page_token = self._get_page_increment_token(pagination_type, previous_token, response)
+        elif pag_type == "offset":
+            next_page_token = self._get_offset_token(pagination_type, response)
+        elif pag_type == "incremental_offset":
+            next_page_token = self._get_incremental_offset_token(pagination_type, previous_token, response)
+        else:
+            next_page_token = None
 
         if pagination_type.get("embedded"):
             self.next_page_token = next_page_token
