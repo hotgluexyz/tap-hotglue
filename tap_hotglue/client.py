@@ -722,16 +722,20 @@ class HotglueStream(RESTStream):
                 yield from super().get_records(context)
 
 
+    def check_body_for_error(self, body: dict) -> bool:
+        if self.error_response_json_path:
+            error_response = next(extract_jsonpath(self.error_response_json_path, input=body), None)
+            if error_response:
+                raise Exception(f"Error: {error_response}")
+
     def parse_response(self, response: requests.Response) -> Iterable[dict]:
         if "text/xml" in response.headers.get("Content-Type", ""):
             json_response = xml_to_dict(response)
-            if self.error_response_json_path:
-                error_response = next(extract_jsonpath(self.error_response_json_path, input=json_response), None)
-                if error_response:
-                    raise Exception(f"Error: {error_response}")
+            self.check_body_for_error(json_response)
             for record in extract_jsonpath(self.records_jsonpath, input=json_response):
                 record = record.get("field")
                 record = {field["@name"]: field["@value"] for field in record}
                 yield record
         else:
+            self.check_body_for_error(response.json())
             yield from super().parse_response(response)
