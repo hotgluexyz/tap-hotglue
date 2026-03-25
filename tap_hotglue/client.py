@@ -80,6 +80,7 @@ class HotglueStream(RESTStream):
             case "BasicHttpAuthenticator":
                 return "basic"
             case "BearerAuthenticator":
+                # TODO: not sure if this assumption is true for all cases
                 self.authentication["value"] = self.authentication["api_token"]
                 return "bearer"
             case "OAuthAuthenticator":
@@ -94,6 +95,7 @@ class HotglueStream(RESTStream):
                 return "oauth"
             case "SessionTokenAuthenticator":
                 self.authentication["token_type"] = "request"
+                # TODO: test with airbyte endpoint format
                 self.authentication["endpoint"] = self.authentication.get("login_requester", {}).get("url_base")
                 self.authentication["request_payload"] = self.authentication.get("login_requester", {}).get("request_body_json")
                 return "bearer"
@@ -258,6 +260,7 @@ class HotglueStream(RESTStream):
     def _resolve_airbyte_config_var(self, path: str) -> str | None:
         """Resolve {{ config['field'] }} style variables used by Airbyte taps.
 
+        Airbyte definitions use this literal form (not the generic Jinja path below).
         Returns the resolved string, or None if the pattern was not found.
         """
         match = re.search(r"\{\{\s*config\[['\"]([^'\"]+)['\"]\]\s*\}\}", path)
@@ -288,7 +291,10 @@ class HotglueStream(RESTStream):
             raise ValueError(f"Failed to render template '{path}': {e}")
 
     def _substitute_bracket_vars(self, path: str, context: dict) -> str:
-        """Replace {var} placeholders with values from config, context, or stream attributes."""
+        """Replace {var} placeholders with values from config, context, or stream attributes.
+
+        `var` may include `|default` when the looked-up value is missing.
+        """
         for full_var in re.findall(r"\{([^}]+)\}", path):
             var = full_var.strip()
             var_expr, default_value = (
@@ -324,6 +330,7 @@ class HotglueStream(RESTStream):
         # ---------- 3. Substitute {var} placeholders ----------
         path = self._substitute_bracket_vars(path, context)
 
+        # Optionally parse path object structure
         if parse:
             return self.parse_objs(path)
         return path
@@ -416,8 +423,10 @@ class HotglueStream(RESTStream):
         elif page_value := pagination_type.get("page_value"):
             offset = self.eval_expression(page_value, {"response": response.json()})
 
+        # If offset is a url, extract the paging query parameter
         if offset and isinstance(offset, str) and offset.startswith("http"):
             parsed_url = urlparse(offset)
+            # Extract the query parameters
             query_params = parse_qs(parsed_url.query)
             cursor = query_params.get(pagination_type.get("page_name"))
             if cursor and len(cursor) > 0:

@@ -162,6 +162,7 @@ class TapHotglue(Tap):
             stream_fields["error_response_json_path"] = get_json_path(stream_data["error_message_path"])
 
         if self.airbyte_tap and stream_data.get("retriever", {}).get("record_selector", {}).get("extractor", {}).get("field_path"):
+            # this is an array, we need to process it to be a valid json path
             json_path = ".".join(stream_data["retriever"]["record_selector"]["extractor"]["field_path"])
             stream_fields["records_jsonpath"] = get_json_path(json_path)
 
@@ -211,6 +212,7 @@ class TapHotglue(Tap):
                     parent_stream[0].get("stream").get("name")
                     or parent_stream[0].get("stream").get("$ref").split("/")[-1]
                 )
+                # update path if it's a child stream
                 stream_fields["path"] = self.normalize_path(path)
 
         return parent_stream_name
