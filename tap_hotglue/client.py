@@ -70,6 +70,7 @@ class HotglueStream(RESTStream):
     payload = None
     incremental_sync = {}
     start_date = None
+    error_response_json_path = None
 
     @cached_property
     def authentication(self):
@@ -724,6 +725,10 @@ class HotglueStream(RESTStream):
     def parse_response(self, response: requests.Response) -> Iterable[dict]:
         if "text/xml" in response.headers.get("Content-Type", ""):
             json_response = xml_to_dict(response)
+            if self.error_response_json_path:
+                error_response = next(extract_jsonpath(get_json_path(self.error_response_json_path), input=json_response), None)
+                if error_response:
+                    raise Exception(f"Error: {error_response}")
             for record in extract_jsonpath(self.records_jsonpath, input=json_response):
                 record = record.get("field")
                 record = {field["@name"]: field["@value"] for field in record}

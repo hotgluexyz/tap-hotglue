@@ -201,6 +201,10 @@ class TapHotglue(Tap):
                 json_path = stream_data["record_selector"]["field_path"]
                 stream_fields.update({"records_jsonpath": get_json_path(json_path)})
 
+            if not self.airbyte_tap and stream_data.get("error_message_path"):
+                json_path = stream_data["error_message_path"]
+                stream_fields.update({"error_response_json_path": get_json_path(json_path)})
+
             if self.airbyte_tap and stream_data.get("retriever", {}).get("record_selector", {}).get("extractor", {}).get("field_path"):
                 # this is an array, we need to process it to be a valid json path
                 json_path = stream_data["retriever"]["record_selector"]["extractor"]["field_path"]
