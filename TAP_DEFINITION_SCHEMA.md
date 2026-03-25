@@ -207,8 +207,6 @@ Defines how to extract records from the API response.
 
 ## Error message selector
 
-### Error Message Selector
-
 Defines how to extract and raise errors from API responses when an error message is present in the body.
 
 ```json
