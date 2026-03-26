@@ -74,8 +74,8 @@ class HotglueStream(RESTStream):
     def authentication(self):
         return self.tap_definition["definitions"].get("base_requester").get("authenticator") if self._tap.airbyte_tap else self.tap_definition.get("authentication")
 
-    def _normalize_airbyte_auth_type(self, auth_type: str) -> str:
-        """Map Airbyte authenticator type names to internal type names."""
+    def _normalize_airbyte_auth_config(self, auth_type: str) -> str:
+        """Map Airbyte authenticator type names to internal type names and normalize self.authentication in-place."""
         match auth_type:
             case "BasicHttpAuthenticator":
                 return "basic"
@@ -129,7 +129,7 @@ class HotglueStream(RESTStream):
 
         if self._tap.airbyte_tap:
             # TODO: need to handle other auth types
-            type = self._normalize_airbyte_auth_type(type)
+            type = self._normalize_airbyte_auth_config(type)
 
         if type == "api":
             # get api key field used in config
@@ -316,18 +316,19 @@ class HotglueStream(RESTStream):
         return path
 
     def get_field_value(self, path, context=dict(), parse=False):
-        # ---------- 1. Support direct Airbyte-style variables ----------
+        """Get a value from the config, context, or stream attributes.
+
+        Path may be a literal string or a Jinja template expression.
+        """
         if hasattr(self, "_tap") and self._tap.airbyte_tap:
             resolved = self._resolve_airbyte_config_var(path)
             if resolved is not None:
                 return resolved
 
-        # ---------- 2. Support jinja variables ----------
         rendered = self._render_jinja_template(path, context)
         if rendered is not None:
             return rendered
 
-        # ---------- 3. Substitute {var} placeholders ----------
         path = self._substitute_bracket_vars(path, context)
 
         # Optionally parse path object structure
