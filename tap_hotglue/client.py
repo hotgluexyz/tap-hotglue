@@ -503,7 +503,7 @@ class HotglueStream(RESTStream):
         if self.params:
             for param in self.params:
                 value = self.get_field_value(param["value"], context)
-                if value:
+                if value is not None:
                     params[param["name"]] = value
 
         # add pagination params
